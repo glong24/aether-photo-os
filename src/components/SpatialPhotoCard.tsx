@@ -1,5 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -36,6 +35,7 @@ interface SpatialPhotoCardProps {
   onSendBack: (id: string) => void;
   onResetOne: (id: string) => void;
   onSnapGuidesChange: (guides: SnapGuides) => void;
+  onDragStateChange?: (dragging: boolean) => void;
 }
 
 export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
@@ -53,6 +53,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   onSendBack,
   onResetOne,
   onSnapGuidesChange,
+  onDragStateChange,
 }) => {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const photoRef = useRef(photo);
@@ -68,24 +69,6 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   const isDraggingRef = useRef(false);
   const [tilt, setTilt] = useState({ rx: 0, ry: 0, glareX: 50, glareY: 50 });
 
-  const activePointers = useRef>(new Map());
-  const dragOrigin = useRef({
-    pointerX: 0,
-    pointerY: 0,
-    photoX: 0,
-    photoY: 0,
-    lastX: 0,
-    lastY: 0,
-    lastTime: 0,
-    vx: 0,
-    vy: 0,
-  });
-  const pinchOrigin = useRef<{
-    distance: number;
-    angle: number;
-    scale: number;
-    rotation: number;
-  } | null>(null);
   const inertiaRaf = useRef<number | null>(null);
   const lastSnapState = useRef<{ v: number | null; h: number | null }>({
     v: null,
@@ -93,14 +76,17 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   });
   const lastTapTime = useRef<number>(0);
 
-  const stopInertia = useCallback(() => {
+  const stopInertia = () => {
     if (inertiaRaf.current !== null) {
       cancelAnimationFrame(inertiaRaf.current);
       inertiaRaf.current = null;
     }
+  };
+
+  useEffect(() => {
+    return () => stopInertia();
   }, []);
 
-  // Native non-passive wheel listener for smooth zoom
   useEffect(() => {
     const el = cardRef.current;
     if (!el) return;
@@ -123,264 +109,287 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
     return () => el.removeEventListener('wheel', handleWheel);
   }, [onSelect, onUpdate]);
 
-  // Global window pointer move / up handlers for 100% reliable 1:1 cursor tracking
-  const handleWindowPointerMove = useCallback(
-    (e: PointerEvent) => {
-      if (!activePointers.current.has(e.pointerId) || photoRef.current.locked) {
-        return;
-      }
+  const applyDragMove = (
+    clientX: number,
+    clientY: number,
+    origin: {
+      startX: number;
+      startY: number;
+      photoX: number;
+      photoY: number;
+      lastX: number;
+      lastY: number;
+      lastTime: number;
+      vx: number;
+      vy: number;
+    }
+  ) => {
+    const now = performance.now();
+    const dt = Math.max(8, now - origin.lastTime);
+    const instVx = ((clientX - origin.lastX) / dt) * 16;
+    const instVy = ((clientY - origin.lastY) / dt) * 16;
 
-      activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    origin.vx = origin.vx * 0.55 + instVx * 0.45;
+    origin.vy = origin.vy * 0.55 + instVy * 0.45;
+    origin.lastX = clientX;
+    origin.lastY = clientY;
+    origin.lastTime = now;
 
-      // Two-finger pinch zoom & rotate on touchscreens
-      if (activePointers.current.size === 2 && pinchOrigin.current) {
-        const pts = Array.from(activePointers.current.values());
-        const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
-        const angle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+    const dx = clientX - origin.startX;
+    const dy = clientY - origin.startY;
 
-        const scaleRatio = dist / pinchOrigin.current.distance;
-        const angleDeltaDeg = ((angle - pinchOrigin.current.angle) * 180) / Math.PI;
+    let nextX = origin.photoX + dx;
+    let nextY = origin.photoY + dy;
 
-        const nextScale = Math.max(
-          0.35,
-          Math.min(2.8, pinchOrigin.current.scale * scaleRatio)
-        );
-        const nextRot = ((pinchOrigin.current.rotation + angleDeltaDeg + 180) % 360) - 180;
+    let guideV: number | null = null;
+    let guideH: number | null = null;
 
-        onUpdate(photoRef.current.id, (prev) => ({
-          ...prev,
-          scale: Number(nextScale.toFixed(3)),
-          rotation: Math.round(nextRot),
-        }));
-        return;
-      }
-
-      // Single-pointer 1:1 cursor dragging
-      if (activePointers.current.size === 1) {
-        const now = performance.now();
-        const dt = Math.max(8, now - dragOrigin.current.lastTime);
-        const instVx = ((e.clientX - dragOrigin.current.lastX) / dt) * 16;
-        const instVy = ((e.clientY - dragOrigin.current.lastY) / dt) * 16;
-
-        dragOrigin.current.vx = dragOrigin.current.vx * 0.6 + instVx * 0.4;
-        dragOrigin.current.vy = dragOrigin.current.vy * 0.6 + instVy * 0.4;
-        dragOrigin.current.lastX = e.clientX;
-        dragOrigin.current.lastY = e.clientY;
-        dragOrigin.current.lastTime = now;
-
-        const dx = e.clientX - dragOrigin.current.pointerX;
-        const dy = e.clientY - dragOrigin.current.pointerY;
-
-        let nextX = dragOrigin.current.photoX + dx;
-        let nextY = dragOrigin.current.photoY + dy;
-
-        let guideV: number | null = null;
-        let guideH: number | null = null;
-
-        if (settingsRef.current.magneticSnap && Math.hypot(dx, dy) > 12) {
-          const threshold = 9;
-          if (Math.abs(nextX) < threshold) {
-            nextX = 0;
-            guideV = 0;
-          } else {
-            for (const other of othersRef.current) {
-              if (other.visible && Math.abs(nextX - other.x) < threshold) {
-                nextX = other.x;
-                guideV = other.x;
-                break;
-              }
-            }
-          }
-
-          if (Math.abs(nextY) < threshold) {
-            nextY = 0;
-            guideH = 0;
-          } else {
-            for (const other of othersRef.current) {
-              if (other.visible && Math.abs(nextY - other.y) < threshold) {
-                nextY = other.y;
-                guideH = other.y;
-                break;
-              }
-            }
-          }
-
-          if (
-            (guideV !== null && lastSnapState.current.v !== guideV) ||
-            (guideH !== null && lastSnapState.current.h !== guideH)
-          ) {
-            playSound('snap', settingsRef.current.audioEnabled);
-          }
-          lastSnapState.current = { v: guideV, h: guideH };
-        }
-
-        onSnapGuidesChange({ vertical: guideV, horizontal: guideH });
-
-        const boundX = Math.max(360, window.innerWidth * 0.48);
-        const boundY = Math.max(260, window.innerHeight * 0.46);
-        nextX = Math.max(-boundX, Math.min(boundX, nextX));
-        nextY = Math.max(-boundY, Math.min(boundY, nextY));
-
-        onUpdate(photoRef.current.id, (prev) => ({
-          ...prev,
-          x: Math.round(nextX),
-          y: Math.round(nextY),
-        }));
-      }
-    },
-    [onSnapGuidesChange, onUpdate]
-  );
-
-  const cleanupWindowListeners = useCallback(() => {
-    window.removeEventListener('pointermove', handleWindowPointerMove);
-    window.removeEventListener('pointerup', handleWindowPointerUpRef.current);
-    window.removeEventListener('pointercancel', handleWindowPointerUpRef.current);
-    window.removeEventListener('blur', handleWindowBlurRef.current);
-  }, [handleWindowPointerMove]);
-
-  const handleWindowPointerUp = useCallback(
-    (e: PointerEvent) => {
-      if (!activePointers.current.has(e.pointerId)) return;
-      activePointers.current.delete(e.pointerId);
-
-      if (activePointers.current.size === 0) {
-        cleanupWindowListeners();
-        isDraggingRef.current = false;
-        setIsDragging(false);
-        onSnapGuidesChange({ vertical: null, horizontal: null });
-        lastSnapState.current = { v: null, h: null };
-
-        if (settingsRef.current.inertiaEnabled && !pinchOrigin.current) {
-          let vx = dragOrigin.current.vx;
-          let vy = dragOrigin.current.vy;
-          const speed = Math.hypot(vx, vy);
-
-          if (speed > 1.5) {
-            const id = photoRef.current.id;
-            const boundX = Math.max(360, window.innerWidth * 0.48);
-            const boundY = Math.max(260, window.innerHeight * 0.46);
-
-            const glide = () => {
-              vx *= 0.9;
-              vy *= 0.9;
-              if (Math.hypot(vx, vy) < 0.3) {
-                inertiaRaf.current = null;
-                return;
-              }
-              onUpdate(id, (prev) => ({
-                ...prev,
-                x: Math.round(Math.max(-boundX, Math.min(boundX, prev.x + vx))),
-                y: Math.round(Math.max(-boundY, Math.min(boundY, prev.y + vy))),
-              }));
-              inertiaRaf.current = requestAnimationFrame(glide);
-            };
-
-            inertiaRaf.current = requestAnimationFrame(glide);
+    if (settingsRef.current.magneticSnap && Math.hypot(dx, dy) > 10) {
+      const threshold = 9;
+      if (Math.abs(nextX) < threshold) {
+        nextX = 0;
+        guideV = 0;
+      } else {
+        for (const other of othersRef.current) {
+          if (other.visible && Math.abs(nextX - other.x) < threshold) {
+            nextX = other.x;
+            guideV = other.x;
+            break;
           }
         }
-        pinchOrigin.current = null;
       }
-    },
-    [cleanupWindowListeners, onSnapGuidesChange, onUpdate]
-  );
 
-  const handleWindowBlur = useCallback(() => {
-    activePointers.current.clear();
-    cleanupWindowListeners();
+      if (Math.abs(nextY) < threshold) {
+        nextY = 0;
+        guideH = 0;
+      } else {
+        for (const other of othersRef.current) {
+          if (other.visible && Math.abs(nextY - other.y) < threshold) {
+            nextY = other.y;
+            guideH = other.y;
+            break;
+          }
+        }
+      }
+
+      if (
+        (guideV !== null && lastSnapState.current.v !== guideV) ||
+        (guideH !== null && lastSnapState.current.h !== guideH)
+      ) {
+        playSound('snap', settingsRef.current.audioEnabled);
+      }
+      lastSnapState.current = { v: guideV, h: guideH };
+    }
+
+    onSnapGuidesChange({ vertical: guideV, horizontal: guideH });
+
+    const boundX = Math.max(360, window.innerWidth * 0.48);
+    const boundY = Math.max(260, window.innerHeight * 0.46);
+    nextX = Math.max(-boundX, Math.min(boundX, nextX));
+    nextY = Math.max(-boundY, Math.min(boundY, nextY));
+
+    onUpdate(photoRef.current.id, (prev) => ({
+      ...prev,
+      x: Math.round(nextX),
+      y: Math.round(nextY),
+    }));
+  };
+
+  const finishDragWithInertia = (vxInit: number, vyInit: number) => {
     isDraggingRef.current = false;
     setIsDragging(false);
-    pinchOrigin.current = null;
+    onDragStateChange?.(false);
     onSnapGuidesChange({ vertical: null, horizontal: null });
-  }, [cleanupWindowListeners, onSnapGuidesChange]);
+    lastSnapState.current = { v: null, h: null };
 
-  const handleWindowPointerUpRef = useRef(handleWindowPointerUp);
-  const handleWindowBlurRef = useRef(handleWindowBlur);
-  handleWindowPointerUpRef.current = handleWindowPointerUp;
-  handleWindowBlurRef.current = handleWindowBlur;
+    if (!settingsRef.current.inertiaEnabled) return;
 
-  useEffect(() => {
-    return () => {
-      stopInertia();
-      cleanupWindowListeners();
+    let vx = vxInit;
+    let vy = vyInit;
+    if (Math.hypot(vx, vy) <= 1.5) return;
+
+    const id = photoRef.current.id;
+    const boundX = Math.max(360, window.innerWidth * 0.48);
+    const boundY = Math.max(260, window.innerHeight * 0.46);
+
+    const glide = () => {
+      vx *= 0.9;
+      vy *= 0.9;
+      if (Math.hypot(vx, vy) < 0.3) {
+        inertiaRaf.current = null;
+        return;
+      }
+      onUpdate(id, (prev) => ({
+        ...prev,
+        x: Math.round(Math.max(-boundX, Math.min(boundX, prev.x + vx))),
+        y: Math.round(Math.max(-boundY, Math.min(boundY, prev.y + vy))),
+      }));
+      inertiaRaf.current = requestAnimationFrame(glide);
     };
-  }, [cleanupWindowListeners, stopInertia]);
 
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest('[data-no-drag="true"]')) {
-      return;
-    }
-    if (e.pointerType === 'mouse' && e.button !== 0) {
-      return;
-    }
+    inertiaRaf.current = requestAnimationFrame(glide);
+  };
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('[data-no-drag="true"]')) return;
 
     e.preventDefault();
     e.stopPropagation();
     stopInertia();
 
-    onSelect(photo.id);
+    onSelect(photoRef.current.id);
     if (mode !== 'overlap') {
-      onBringFront(photo.id);
+      onBringFront(photoRef.current.id);
+    }
+
+    if (photoRef.current.locked) return;
+
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    onDragStateChange?.(true);
+    setTilt({ rx: 0, ry: 0, glareX: 50, glareY: 50 });
+
+    const origin = {
+      startX: e.clientX,
+      startY: e.clientY,
+      photoX: photoRef.current.x,
+      photoY: photoRef.current.y,
+      lastX: e.clientX,
+      lastY: e.clientY,
+      lastTime: performance.now(),
+      vx: 0,
+      vy: 0,
+    };
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      moveEvent.preventDefault();
+      applyDragMove(moveEvent.clientX, moveEvent.clientY, origin);
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('blur', onMouseUp);
+      finishDragWithInertia(origin.vx, origin.vy);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('blur', onMouseUp);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('[data-no-drag="true"]')) return;
+
+    e.stopPropagation();
+    stopInertia();
+
+    onSelect(photoRef.current.id);
+    if (mode !== 'overlap') {
+      onBringFront(photoRef.current.id);
     }
 
     const now = performance.now();
-    if (e.pointerType === 'touch' && now - lastTapTime.current < 300) {
+    if (e.touches.length === 1 && now - lastTapTime.current < 300) {
       lastTapTime.current = 0;
-      onResetOne(photo.id);
+      if (!photoRef.current.locked) onResetOne(photoRef.current.id);
       return;
     }
     lastTapTime.current = now;
 
-    if (photo.locked) return;
+    if (photoRef.current.locked) return;
 
-    // Prevent stale pointers from ever blocking mouse drag
-    if (e.pointerType === 'mouse') {
-      activePointers.current.clear();
-    }
+    isDraggingRef.current = true;
+    setIsDragging(true);
+    onDragStateChange?.(true);
+    setTilt({ rx: 0, ry: 0, glareX: 50, glareY: 50 });
 
-    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const t0 = e.touches[0];
+    const origin = {
+      startX: t0.clientX,
+      startY: t0.clientY,
+      photoX: photoRef.current.x,
+      photoY: photoRef.current.y,
+      lastX: t0.clientX,
+      lastY: t0.clientY,
+      lastTime: now,
+      vx: 0,
+      vy: 0,
+    };
 
-    if (activePointers.current.size === 1) {
-      isDraggingRef.current = true;
-      setIsDragging(true);
-      setTilt({ rx: 0, ry: 0, glareX: 50, glareY: 50 });
-      dragOrigin.current = {
-        pointerX: e.clientX,
-        pointerY: e.clientY,
-        photoX: photoRef.current.x,
-        photoY: photoRef.current.y,
-        lastX: e.clientX,
-        lastY: e.clientY,
-        lastTime: now,
-        vx: 0,
-        vy: 0,
-      };
-      pinchOrigin.current = null;
+    let pinch: {
+      distance: number;
+      angle: number;
+      scale: number;
+      rotation: number;
+    } | null = null;
 
-      window.addEventListener('pointermove', handleWindowPointerMove);
-      window.addEventListener('pointerup', handleWindowPointerUpRef.current);
-      window.addEventListener('pointercancel', handleWindowPointerUpRef.current);
-      window.addEventListener('blur', handleWindowBlurRef.current);
-    } else if (activePointers.current.size === 2) {
-      const pts = Array.from(activePointers.current.values());
-      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
-      const angle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
-      pinchOrigin.current = {
-        distance: Math.max(10, dist),
-        angle,
+    if (e.touches.length === 2) {
+      const t1 = e.touches[1];
+      pinch = {
+        distance: Math.max(10, Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY)),
+        angle: Math.atan2(t1.clientY - t0.clientY, t1.clientX - t0.clientX),
         scale: photoRef.current.scale,
         rotation: photoRef.current.rotation,
       };
     }
+
+    const onTouchMove = (moveEvent: TouchEvent) => {
+      moveEvent.preventDefault();
+      if (moveEvent.touches.length === 2) {
+        const a = moveEvent.touches[0];
+        const b = moveEvent.touches[1];
+        const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+        const angle = Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX);
+        if (!pinch) {
+          pinch = {
+            distance: Math.max(10, dist),
+            angle,
+            scale: photoRef.current.scale,
+            rotation: photoRef.current.rotation,
+          };
+          return;
+        }
+        const nextScale = Math.max(
+          0.35,
+          Math.min(2.8, pinch.scale * (dist / pinch.distance))
+        );
+        const deltaDeg = ((angle - pinch.angle) * 180) / Math.PI;
+        const nextRot = ((pinch.rotation + deltaDeg + 180) % 360) - 180;
+        onUpdate(photoRef.current.id, (prev) => ({
+          ...prev,
+          scale: Number(nextScale.toFixed(3)),
+          rotation: Math.round(nextRot),
+        }));
+      } else if (moveEvent.touches.length === 1 && !pinch) {
+        const touch = moveEvent.touches[0];
+        applyDragMove(touch.clientX, touch.clientY, origin);
+      }
+    };
+
+    const onTouchEnd = (endEvent: TouchEvent) => {
+      if (endEvent.touches.length === 0) {
+        window.removeEventListener('touchmove', onTouchMove);
+        window.removeEventListener('touchend', onTouchEnd);
+        window.removeEventListener('touchcancel', onTouchEnd);
+        finishDragWithInertia(pinch ? 0 : origin.vx, pinch ? 0 : origin.vy);
+      }
+    };
+
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
+    window.addEventListener('touchcancel', onTouchEnd);
   };
 
-  const handleHoverMove = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handleHoverMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (isDraggingRef.current || !settingsRef.current.tilt3D || !cardRef.current) {
       return;
     }
     const rect = cardRef.current.getBoundingClientRect();
     const relX = (e.clientX - rect.left) / rect.width;
     const relY = (e.clientY - rect.top) / rect.height;
-    const maxTilt = mode === 'space3d' ? 16 : 11;
+    const maxTilt = mode === 'space3d' ? 14 : 9;
     setTilt({
       rx: (0.5 - relY) * maxTilt * 2,
       ry: (relX - 0.5) * maxTilt * 2,
@@ -389,7 +398,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
     });
   };
 
-  const handleRotateDialDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+  const handleRotateDialMouseDown = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     e.preventDefault();
     if (photo.locked || !cardRef.current) return;
@@ -400,7 +409,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
     const startAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX);
     const initialRotation = photo.rotation;
 
-    const onMove = (moveEvent: PointerEvent) => {
+    const onMove = (moveEvent: MouseEvent) => {
       const currentAngle = Math.atan2(
         moveEvent.clientY - centerY,
         moveEvent.clientX - centerX
@@ -413,19 +422,18 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
     };
 
     const onUp = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
     };
 
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   };
 
   if (!photo.visible) return null;
 
-  // Smart proportional sizing for both portrait & landscape uploaded photos
   const cardWidth =
-    photo.aspectRatio > 1.05 ? Math.round(baseWidth * 1.35) : baseWidth;
+    photo.aspectRatio > 1.05 ? Math.round(baseWidth * 1.32) : baseWidth;
   const cardHeight = Math.round(cardWidth / photo.aspectRatio);
 
   const depthFactor = 0.65 + (photo.z + 300) / 600;
@@ -435,28 +443,29 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   const filterString = buildCssFilter(photo.effects);
   const shadowAlpha = (photo.effects.shadowIntensity / 100) * 0.78;
   const glowSpread = photo.effects.neonGlow * 0.62;
-  const hoverBoost = isHovered || isSelected ? 14 : 0;
+  const hoverBoost = isDragging ? 22 : isHovered || isSelected ? 14 : 0;
 
   const boxShadow = [
     `0 ${18 + photo.effects.shadowIntensity * 0.25}px ${38 + photo.effects.shadowIntensity * 0.4}px rgba(0, 0, 0, ${shadowAlpha})`,
-    photo.effects.neonGlow > 0 || isHovered || isSelected
-      ? `0 0 ${glowSpread + hoverBoost}px ${photo.effects.neonColor}88`
+    photo.effects.neonGlow > 0 || isHovered || isSelected || isDragging
+      ? `0 0 ${glowSpread + hoverBoost}px ${photo.effects.neonColor}99`
       : '',
-    isSelected ? `0 0 0 1.5px ${photo.effects.neonColor}` : '',
+    isSelected || isDragging ? `0 0 0 1.5px ${photo.effects.neonColor}` : '',
   ]
     .filter(Boolean)
     .join(', ');
 
-  const transformString = [
-    `translate3d(calc(-50% + ${photo.x + pxOffset}px), calc(-50% + ${photo.y + pyOffset}px), ${mode === 'space3d' ? photo.z : 0}px)`,
-    `scale(${photo.scale})`,
-    `rotateZ(${photo.rotation}deg)`,
-    settings.tilt3D && !isDragging
-      ? `rotateX(${tilt.rx.toFixed(2)}deg) rotateY(${tilt.ry.toFixed(2)}deg)`
-      : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const xPos = Number((photo.x + pxOffset).toFixed(1));
+  const yPos = Number((photo.y + pyOffset).toFixed(1));
+  const zPos = mode === 'space3d' ? photo.z : 0;
+  const activeScale = isDragging ? Number((photo.scale * 1.02).toFixed(3)) : photo.scale;
+
+  const outerTransform = `translate3d(${xPos}px, ${yPos}px, ${zPos}px) translate(-50%, -50%) scale(${activeScale}) rotate(${photo.rotation}deg)`;
+
+  const innerTiltTransform =
+    settings.tilt3D && !isDragging && (tilt.rx !== 0 || tilt.ry !== 0)
+      ? `perspective(950px) rotateX(${tilt.rx.toFixed(2)}deg) rotateY(${tilt.ry.toFixed(2)}deg)`
+      : 'none';
 
   const innerFlipTransform = `scaleX(${photo.flipX ? -1 : 1}) scaleY(${photo.flipY ? -1 : 1})`;
 
@@ -465,8 +474,9 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
       ref={cardRef}
       draggable={false}
       onDragStart={(e) => e.preventDefault()}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handleHoverMove}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleHoverMove}
+      onTouchStart={handleTouchStart}
       onDoubleClick={(e) => {
         e.stopPropagation();
         if (!photo.locked) onResetOne(photo.id);
@@ -482,9 +492,8 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
         top: '50%',
         width: `${cardWidth}px`,
         height: `${cardHeight}px`,
-        zIndex: photo.zIndex,
-        transform: transformString,
-        transformStyle: 'preserve-3d',
+        zIndex: isDragging ? photo.zIndex + 50 : photo.zIndex,
+        transform: outerTransform,
         touchAction: 'none',
         mixBlendMode: photo.effects.blendMode,
         opacity: photo.effects.opacity / 100,
@@ -493,7 +502,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
           ? 'none'
           : 'transform 0.14s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease',
       }}
-      className={`group rounded-[22px] ${
+      className={`group rounded-[22px] select-none ${
         photo.locked
           ? 'cursor-not-allowed'
           : isDragging
@@ -501,16 +510,16 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
           : 'cursor-grab'
       }`}
     >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
+      <div
         className="relative h-full w-full"
-        style={{ transformStyle: 'preserve-3d' }}
+        style={{
+          transform: innerTiltTransform,
+          transition: isDragging ? 'none' : 'transform 0.16s ease-out',
+        }}
       >
         <div
           className={`relative h-full w-full rounded-[22px] overflow-hidden border transition-colors duration-200 ${
-            isSelected
+            isSelected || isDragging
               ? 'border-cyan-300/80'
               : isHovered
               ? 'border-cyan-400/55'
@@ -602,7 +611,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
             />
           )}
 
-          {(isHovered || isSelected) && !uiHidden && (
+          {(isHovered || isSelected || isDragging) && !uiHidden && (
             <div className="pointer-events-none absolute inset-2.5">
               <span className="absolute left-0 top-0 h-3.5 w-3.5 border-l-2 border-t-2 border-cyan-300/80 rounded-tl-sm" />
               <span className="absolute right-0 top-0 h-3.5 w-3.5 border-r-2 border-t-2 border-cyan-300/80 rounded-tr-sm" />
@@ -611,7 +620,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
             </div>
           )}
 
-          {!uiHidden && (isHovered || isSelected) && (
+          {!uiHidden && (isHovered || isSelected || isDragging) && (
             <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center justify-between rounded-xl bg-black/55 px-2.5 py-1.5 backdrop-blur-md border border-white/10">
               <div className="flex items-center gap-1.5 min-w-0">
                 <span
@@ -628,6 +637,8 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
               <span className="ml-2 shrink-0 font-mono text-[9px] text-slate-300/80">
                 {photo.locked ? (
                   <Lock className="inline h-3 w-3 text-amber-300" />
+                ) : isDragging ? (
+                  `X:${photo.x} Y:${photo.y}`
                 ) : (
                   `${Math.round(photo.scale * 100)}% • ${photo.rotation}°`
                 )}
@@ -644,7 +655,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
             <button
               type="button"
               data-no-drag="true"
-              onPointerDown={handleRotateDialDown}
+              onMouseDown={handleRotateDialMouseDown}
               title="Drag to Rotate"
               className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-mono text-cyan-200 hover:bg-cyan-400/20 cursor-ew-resize transition"
             >
@@ -718,7 +729,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
             </button>
           </div>
         )}
-      </motion.div>
+      </div>
     </div>
   );
 };
