@@ -113,7 +113,7 @@ export const BootSequence: React.FC<BootSequenceProps> = ({
       {/* Brand Wordmark */}
       <div className="relative text-center">
         <h1 className="font-display text-2xl sm:text-3xl font-semibold tracking-[0.28em] text-white">
-          AETHER <span className="text-cyan-400">//</span> OS
+          GIA <span className="text-cyan-400">LONG</span>
         </h1>
         <p className="mt-2 font-mono text-[11px] uppercase tracking-[0.26em] text-slate-400">
           SPATIAL PHOTO ENGINE v2.6
