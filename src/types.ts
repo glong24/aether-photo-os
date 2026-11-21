@@ -52,7 +52,7 @@ export interface PhotoEffects {
 }
 
 export interface PhotoItem {
-  id: 'photo-1' | 'photo-2';
+  id: string;
   name: string;
   subtitle: string;
   src: string;
@@ -183,6 +183,48 @@ export function createInitialPhotos(viewportWidth = 1280): PhotoItem[] {
       },
     },
   ];
+}
+
+const UPLOAD_NEON_COLORS = ['#22d3ee', '#a855f7', '#38bdf8', '#ec4899', '#10b981', '#f59e0b'];
+
+export function createUploadedPhoto(
+  src: string,
+  fileName: string,
+  naturalWidth: number,
+  naturalHeight: number,
+  existingPhotos: PhotoItem[],
+  offsetIndex = 0
+): PhotoItem {
+  const count = existingPhotos.length + 1 + offsetIndex;
+  const maxZ = Math.max(20, ...existingPhotos.map((p) => p.zIndex));
+  const cleanName = fileName
+    .replace(/\.[^/.]+$/, '')
+    .toUpperCase()
+    .slice(0, 14);
+  const ratio =
+    naturalWidth > 0 && naturalHeight > 0 ? naturalWidth / naturalHeight : 3 / 4;
+
+  return {
+    id: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    name: `OBJ ${String(count).padStart(2, '0')} — ${cleanName || 'UPLOAD'}`,
+    subtitle: `UPLOADED // ${naturalWidth}×${naturalHeight}`,
+    src,
+    aspectRatio: Math.max(0.4, Math.min(2.4, ratio)),
+    x: ((count % 5) - 2) * 38,
+    y: ((count % 3) - 1) * 28,
+    z: 20,
+    scale: 1,
+    rotation: ((count % 2 === 0 ? 1 : -1) * 3),
+    flipX: false,
+    flipY: false,
+    zIndex: maxZ + 1 + offsetIndex,
+    visible: true,
+    locked: false,
+    effects: {
+      ...DEFAULT_EFFECTS,
+      neonColor: UPLOAD_NEON_COLORS[count % UPLOAD_NEON_COLORS.length],
+    },
+  };
 }
 
 export function buildCssFilter(effects: PhotoEffects): string {
