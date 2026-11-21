@@ -224,7 +224,7 @@ export async function exportCompositionToPng(
   ctx.save();
   ctx.font = '600 18px "Space Grotesk", sans-serif';
   ctx.fillStyle = 'rgba(226, 232, 240, 0.55)';
-  ctx.fillText(`AETHER // OS  •  MODE: ${mode.toUpperCase()}`, 44, height - 38);
+  ctx.fillText(`GIA LONG  •  MODE: ${mode.toUpperCase()}`, 44, height - 38);
   ctx.restore();
 
   // Trigger download
