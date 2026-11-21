@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Eye, Sparkles } from 'lucide-react';
+import { Eye, Sparkles, Upload } from 'lucide-react';
 import { AmbientCanvas } from './components/AmbientCanvas';
 import { BootSequence } from './components/BootSequence';
 import { CompareStage } from './components/CompareStage';
@@ -23,6 +23,7 @@ import {
   SavedComposition,
   SnapGuides,
   createInitialPhotos,
+  createUploadedPhoto,
 } from './types';
 import { playSound } from './utils/audio';
 import { exportCompositionToPng } from './utils/exporter';
@@ -30,13 +31,37 @@ import { exportCompositionToPng } from './utils/exporter';
 const STORAGE_KEY = 'aether_os_saved_compositions_v1';
 
 const MODE_LABELS: Record<InteractionMode, string> = {
-  free: 'FREE MOVEMENT — Drag, scroll-zoom, rotate, or overlap freely',
+  free: 'FREE MOVEMENT — Press & hold any photo to drag freely, scroll to zoom, or drop new images',
   space3d: '3D SPACE — Drag empty space to orbit the 3D stage & adjust Z-depth',
-  overlap: 'OVERLAP STUDIO — Blend both photos with double-exposure opacity',
+  overlap: 'OVERLAP STUDIO — Blend photos with double-exposure opacity',
   cinematic: 'CINEMATIC — Volumetric lighting, slow orbital breath & film framing',
   playground: 'PLAYGROUND — Experiment with live physics presets & randomize FX',
   compare: 'COMPARE — Side-by-side synced inspection & laser split curtain',
 };
+
+function readImageFile(
+  file: File
+): Promise<{ src: string; width: number; height: number; name: string }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const img = new Image();
+      img.onload = () => {
+        resolve({
+          src: dataUrl,
+          width: img.naturalWidth || 800,
+          height: img.naturalHeight || 1000,
+          name: file.name,
+        });
+      };
+      img.onerror = () => reject(new Error('Invalid image file'));
+      img.src = dataUrl;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function App() {
   const [booting, setBooting] = useState(true);
@@ -45,7 +70,7 @@ export default function App() {
   const [photos, setPhotos] = useState<PhotoItem[]>(() =>
     createInitialPhotos(typeof window !== 'undefined' ? window.innerWidth : 1280)
   );
-  const [selectedId, setSelectedId] = useState<PhotoItem['id']>('photo-1');
+  const [selectedId, setSelectedId] = useState<string>('photo-1');
   const [lighting, setLighting] = useState<EnvironmentLighting>(DEFAULT_LIGHTING);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(() =>
@@ -56,30 +81,29 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [savedOpen, setSavedOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [isFileDragOver, setIsFileDragOver] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuides>({
     vertical: null,
     horizontal: null,
   });
 
-  // 3D Stage camera orbit angles
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement | null>(null);
+
   const [stageOrbit, setStageOrbit] = useState({ rx: 8, ry: -10 });
   const orbitingRef = useRef(false);
   const orbitOrigin = useRef({ x: 0, y: 0, rx: 8, ry: -10 });
 
-  // Playground live motion preset
   const [playgroundPreset, setPlaygroundPreset] = useState<PlaygroundPreset>('none');
 
-  // Viewport sizing for responsive card scale
   const [viewportWidth, setViewportWidth] = useState<number>(() =>
     typeof window !== 'undefined' ? window.innerWidth : 1280
   );
 
-  // Global pointer position for canvas spotlight & parallax
   const pointerRef = useRef({ x: 0, y: 0, normX: 0, normY: 0 });
   const [parallaxOffset, setParallaxOffset] = useState({ x: 0, y: 0 });
 
-  // Saved compositions persisted in localStorage
   const [savedCompositions, setSavedCompositions] = useState<SavedComposition[]>(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -103,14 +127,12 @@ export default function App() {
     window.setTimeout(() => setShowWelcome(false), 5200);
   }, []);
 
-  // Viewport resize listener
   useEffect(() => {
     const onResize = () => setViewportWidth(window.innerWidth);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Track global pointer for ambient light & subtle parallax
   useEffect(() => {
     let raf = 0;
     const onPointerMove = (e: PointerEvent) => {
@@ -135,14 +157,12 @@ export default function App() {
     };
   }, []);
 
-  // Fullscreen sync
   useEffect(() => {
     const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', onFsChange);
     return () => document.removeEventListener('fullscreenchange', onFsChange);
   }, []);
 
-  // Playground live animation loop
   useEffect(() => {
     if (mode !== 'playground' || playgroundPreset === 'none') return;
     let raf = 0;
@@ -153,11 +173,13 @@ export default function App() {
       setPhotos((prev) =>
         prev.map((p, idx) => {
           if (p.locked) return p;
-          const dir = idx === 0 ? 1 : -1;
+          const total = Math.max(1, prev.length);
+          const phase = (idx / total) * Math.PI * 2;
+          const dir = idx % 2 === 0 ? 1 : -1;
           if (playgroundPreset === 'zerog') {
             return {
               ...p,
-              y: Math.round(Math.sin(t + idx * 1.8) * 32),
+              y: Math.round(Math.sin(t + phase) * 32),
               rotation: Math.round(Math.sin(t * 0.7 + idx) * 7),
             };
           }
@@ -165,8 +187,8 @@ export default function App() {
             const radius = viewportWidth < 768 ? 95 : 195;
             return {
               ...p,
-              x: Math.round(Math.cos(t + idx * Math.PI) * radius),
-              y: Math.round(Math.sin(t + idx * Math.PI) * 58),
+              x: Math.round(Math.cos(t + phase) * radius),
+              y: Math.round(Math.sin(t + phase) * 58),
               rotation: Math.round(Math.sin(t + idx) * 14),
             };
           }
@@ -177,14 +199,14 @@ export default function App() {
               x: Math.round(dir * (-spread + Math.sin(t * 1.2) * 28)),
               y: Math.round(Math.cos(t * 1.2) * 22),
               rotation: Math.round(dir * -6),
-              flipX: idx === 1,
+              flipX: idx % 2 === 1,
             };
           }
           if (playgroundPreset === 'vortex') {
             return {
               ...p,
-              x: Math.round(Math.cos(t * 1.4 + idx * Math.PI) * 120),
-              y: Math.round(Math.sin(t * 1.4 + idx * Math.PI) * 85),
+              x: Math.round(Math.cos(t * 1.4 + phase) * 120),
+              y: Math.round(Math.sin(t * 1.4 + phase) * 85),
               rotation: Math.round(((t * 60 * dir) % 360) - 180),
             };
           }
@@ -198,7 +220,97 @@ export default function App() {
     return () => cancelAnimationFrame(raf);
   }, [mode, playgroundPreset, viewportWidth]);
 
-  // Mode transitions with smart curated framing
+  // Add uploaded image files onto the canvas
+  const mountUploadedFiles = useCallback(
+    async (fileList: FileList | File[]) => {
+      const imageFiles = Array.from(fileList).filter((f) =>
+        f.type.startsWith('image/')
+      );
+      if (imageFiles.length === 0) {
+        showToast('Please select valid image files (JPG, PNG, WebP)');
+        return;
+      }
+
+      try {
+        const loaded = await Promise.all(imageFiles.map((f) => readImageFile(f)));
+        let latestId = '';
+        setPhotos((prev) => {
+          const added = loaded.map((item, idx) =>
+            createUploadedPhoto(item.src, item.name, item.width, item.height, prev, idx)
+          );
+          latestId = added[added.length - 1].id;
+          return [...prev, ...added];
+        });
+        if (latestId) setSelectedId(latestId);
+        playSound('save', settings.audioEnabled);
+        showToast(
+          loaded.length === 1
+            ? `Added "${loaded[0].name}"`
+            : `Added ${loaded.length} photos to workspace`
+        );
+      } catch {
+        showToast('Could not read uploaded image');
+      }
+    },
+    [settings.audioEnabled, showToast]
+  );
+
+  const handleUploadInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      mountUploadedFiles(e.target.files);
+    }
+    e.target.value = '';
+  };
+
+  const handleReplaceInputChange = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !file.type.startsWith('image/')) return;
+
+    try {
+      const item = await readImageFile(file);
+      const cleanName = item.name
+        .replace(/\.[^/.]+$/, '')
+        .toUpperCase()
+        .slice(0, 14);
+      setPhotos((prev) =>
+        prev.map((p) =>
+          p.id === selectedId
+            ? {
+                ...p,
+                src: item.src,
+                name: cleanName || p.name,
+                subtitle: `UPLOADED // ${item.width}×${item.height}`,
+                aspectRatio: Math.max(0.4, Math.min(2.4, item.width / item.height)),
+              }
+            : p
+        )
+      );
+      playSound('save', settings.audioEnabled);
+      showToast(`Replaced photo with "${file.name}"`);
+    } catch {
+      showToast('Could not replace photo');
+    }
+  };
+
+  const handleDeletePhoto = useCallback(
+    (id: string) => {
+      if (photos.length <= 2) return;
+      playSound('whoosh', settings.audioEnabled);
+      setPhotos((prev) => {
+        const next = prev.filter((p) => p.id !== id);
+        if (selectedId === id && next.length > 0) {
+          setSelectedId(next[0].id);
+        }
+        return next;
+      });
+      showToast('Photo removed from workspace');
+    },
+    [photos.length, selectedId, settings.audioEnabled, showToast]
+  );
+
   const handleModeChange = useCallback(
     (nextMode: InteractionMode) => {
       playSound('mode', settings.audioEnabled);
@@ -210,10 +322,10 @@ export default function App() {
         setPhotos((prev) =>
           prev.map((p, idx) => ({
             ...p,
-            x: idx === 0 ? -165 : 165,
-            y: idx === 0 ? -12 : 12,
-            z: idx === 0 ? 95 : -75,
-            rotation: idx === 0 ? -6 : 6,
+            x: Math.round((idx - (prev.length - 1) / 2) * 260),
+            y: idx % 2 === 0 ? -12 : 12,
+            z: idx % 2 === 0 ? 95 : -75,
+            rotation: idx % 2 === 0 ? -6 : 6,
             effects: { ...p.effects, blendMode: 'normal', opacity: 100 },
           }))
         );
@@ -221,10 +333,10 @@ export default function App() {
         setPhotos((prev) =>
           prev.map((p, idx) => ({
             ...p,
-            x: idx === 0 ? -42 : 42,
-            y: idx === 0 ? -14 : 14,
+            x: Math.round((idx - (prev.length - 1) / 2) * 80),
+            y: idx % 2 === 0 ? -14 : 14,
             z: 0,
-            rotation: idx === 0 ? -3 : 3,
+            rotation: idx % 2 === 0 ? -3 : 3,
             scale: viewportWidth < 768 ? 0.88 : 1.06,
             effects: {
               ...p.effects,
@@ -237,10 +349,12 @@ export default function App() {
         setPhotos((prev) =>
           prev.map((p, idx) => ({
             ...p,
-            x: idx === 0 ? (viewportWidth < 768 ? -80 : -190) : viewportWidth < 768 ? 80 : 190,
+            x: Math.round(
+              (idx - (prev.length - 1) / 2) * (viewportWidth < 768 ? 160 : 320)
+            ),
             y: 0,
-            z: idx === 0 ? 35 : -25,
-            rotation: idx === 0 ? -2 : 2,
+            z: idx % 2 === 0 ? 35 : -25,
+            rotation: idx % 2 === 0 ? -2 : 2,
             effects: {
               ...p.effects,
               blendMode: 'normal',
@@ -262,14 +376,14 @@ export default function App() {
   );
 
   const handleUpdatePhoto = useCallback(
-    (id: PhotoItem['id'], updater: (prev: PhotoItem) => PhotoItem) => {
+    (id: string, updater: (prev: PhotoItem) => PhotoItem) => {
       setPhotos((prev) => prev.map((p) => (p.id === id ? updater(p) : p)));
     },
     []
   );
 
   const handleUpdateEffects = useCallback(
-    (id: PhotoItem['id'], patch: Partial<PhotoEffects>) => {
+    (id: string, patch: Partial<PhotoEffects>) => {
       setPhotos((prev) =>
         prev.map((p) =>
           p.id === id ? { ...p, effects: { ...p.effects, ...patch } } : p
@@ -279,31 +393,49 @@ export default function App() {
     []
   );
 
-  const handleBringFront = useCallback((id: PhotoItem['id']) => {
+  const handleBringFront = useCallback((id: string) => {
     setPhotos((prev) => {
-      const maxZ = Math.max(...prev.map((p) => p.zIndex));
-      return prev.map((p) =>
-        p.id === id ? { ...p, zIndex: maxZ + 1 } : { ...p, zIndex: Math.min(p.zIndex, 10) }
-      );
+      const maxZ = Math.max(10, ...prev.map((p) => p.zIndex));
+      return prev.map((p) => (p.id === id ? { ...p, zIndex: maxZ + 1 } : p));
     });
   }, []);
 
-  const handleSendBack = useCallback((id: PhotoItem['id']) => {
-    setPhotos((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, zIndex: 5 } : { ...p, zIndex: 20 }))
-    );
+  const handleSendBack = useCallback((id: string) => {
+    setPhotos((prev) => {
+      const minZ = Math.min(...prev.map((p) => p.zIndex));
+      if (minZ <= 2) {
+        return prev.map((p) =>
+          p.id === id ? { ...p, zIndex: 1 } : { ...p, zIndex: p.zIndex + 2 }
+        );
+      }
+      return prev.map((p) => (p.id === id ? { ...p, zIndex: minZ - 1 } : p));
+    });
   }, []);
 
   const handleResetOne = useCallback(
-    (id: PhotoItem['id']) => {
+    (id: string) => {
       playSound('whoosh', settings.audioEnabled);
       const defaults = createInitialPhotos(viewportWidth);
       const targetDefault = defaults.find((d) => d.id === id);
-      if (!targetDefault) return;
       setPhotos((prev) =>
-        prev.map((p) => (p.id === id ? { ...targetDefault, effects: p.effects } : p))
+        prev.map((p) => {
+          if (p.id !== id) return p;
+          if (targetDefault) {
+            return { ...targetDefault, src: p.src, name: p.name, aspectRatio: p.aspectRatio, effects: p.effects };
+          }
+          return {
+            ...p,
+            x: 0,
+            y: 0,
+            z: 0,
+            scale: 1,
+            rotation: 0,
+            flipX: false,
+            flipY: false,
+          };
+        })
       );
-      showToast(`${id === 'photo-1' ? 'OBJ 01 MIRROR' : 'OBJ 02 COURT'} position reset`);
+      showToast('Photo position reset');
     },
     [settings.audioEnabled, viewportWidth, showToast]
   );
@@ -311,6 +443,7 @@ export default function App() {
   const handleResetAll = useCallback(() => {
     playSound('whoosh', settings.audioEnabled);
     setPhotos(createInitialPhotos(viewportWidth));
+    setSelectedId('photo-1');
     setLighting(DEFAULT_LIGHTING);
     setStageOrbit({ rx: 8, ry: -10 });
     setPlaygroundPreset('none');
@@ -335,7 +468,7 @@ export default function App() {
     setPhotos((prev) =>
       prev.map((p, idx) => ({
         ...p,
-        x: Math.round((idx === 0 ? -1 : 1) * (85 + Math.random() * spread * 0.7)),
+        x: Math.round((idx % 2 === 0 ? -1 : 1) * (85 + Math.random() * spread * 0.7)),
         y: Math.round((Math.random() - 0.5) * 140),
         z: Math.round((Math.random() - 0.5) * 180),
         scale: Number((0.82 + Math.random() * 0.42).toFixed(2)),
@@ -381,7 +514,7 @@ export default function App() {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
       } catch {
-        // Ignore storage quota errors
+        // Ignore storage quota errors for large uploaded images
       }
       showToast(`Saved "${name}"`);
     },
@@ -393,6 +526,7 @@ export default function App() {
       playSound('mode', settings.audioEnabled);
       setMode(comp.mode);
       setPhotos(comp.photos);
+      if (comp.photos.length > 0) setSelectedId(comp.photos[0].id);
       setLighting(comp.lighting);
       showToast(`Loaded "${comp.name}"`);
     },
@@ -426,7 +560,6 @@ export default function App() {
     }
   }, [photos, lighting, mode, settings.audioEnabled, showToast]);
 
-  // Global keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (
@@ -457,7 +590,6 @@ export default function App() {
 
   const baseCardWidth = viewportWidth < 640 ? 195 : viewportWidth < 1024 ? 245 : 288;
 
-  // Stage pointer handlers for 3D Orbit mode
   const handleStagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (mode !== 'space3d') return;
     orbitingRef.current = true;
@@ -483,10 +615,73 @@ export default function App() {
     orbitingRef.current = false;
   };
 
+  const handleCanvasDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      setIsFileDragOver(true);
+    }
+  };
+
+  const handleCanvasDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (e.currentTarget === e.target) {
+      setIsFileDragOver(false);
+    }
+  };
+
+  const handleCanvasDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsFileDragOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      mountUploadedFiles(e.dataTransfer.files);
+    }
+  };
+
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-[#03040a] text-slate-100 select-none">
+    <div
+      onDragOver={handleCanvasDragOver}
+      onDragLeave={handleCanvasDragLeave}
+      onDrop={handleCanvasDrop}
+      className="relative h-screen w-screen overflow-hidden bg-[#03040a] text-slate-100 select-none"
+    >
+      {/* Hidden File Inputs for Upload & Replace */}
+      <input
+        ref={uploadInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={handleUploadInputChange}
+      />
+      <input
+        ref={replaceInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleReplaceInputChange}
+      />
+
       {/* Live HTML5 Spatial Background Canvas */}
       <AmbientCanvas lighting={lighting} mode={mode} pointerRef={pointerRef} />
+
+      {/* Drag-and-drop File Upload Overlay */}
+      <AnimatePresence>
+        {isFileDragOver && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="pointer-events-none fixed inset-4 z-[60] flex flex-col items-center justify-center rounded-3xl border-2 border-dashed border-cyan-400 bg-slate-950/80 backdrop-blur-md"
+          >
+            <Upload className="mb-3 h-10 w-10 text-cyan-300" />
+            <p className="font-display text-lg font-semibold tracking-[0.2em] text-white">
+              DROP PHOTOS TO MOUNT
+            </p>
+            <p className="mt-1 font-mono text-xs text-cyan-200/80">
+              Supports JPG, PNG, WebP — multiple files allowed
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Cinematic Boot Intro */}
       <AnimatePresence>
@@ -498,7 +693,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Cinematic Anamorphic Letterbox Bars & Vignette */}
+      {/* Cinematic Letterbox & Vignette */}
       <AnimatePresence>
         {mode === 'cinematic' && (
           <>
@@ -571,7 +766,6 @@ export default function App() {
                     : 'none',
               }}
             >
-              {/* 3D Perspective Holographic Floor in 3D Space Mode */}
               {mode === 'space3d' && lighting.gridEnabled && (
                 <div
                   className="holo-floor-grid pointer-events-none absolute left-1/2 top-1/2 h-[900px] w-[1100px] opacity-65"
@@ -585,14 +779,13 @@ export default function App() {
                 />
               )}
 
-              {/* The Two Authentic Interactive Floating Photos */}
               {photos.map((photo) => {
-                const otherPhoto = photos.find((p) => p.id !== photo.id) ?? photos[0];
+                const otherPhotos = photos.filter((p) => p.id !== photo.id);
                 return (
                   <SpatialPhotoCard
                     key={photo.id}
                     photo={photo}
-                    otherPhoto={otherPhoto}
+                    otherPhotos={otherPhotos}
                     isSelected={selectedId === photo.id}
                     mode={mode}
                     settings={settings}
@@ -630,7 +823,7 @@ export default function App() {
           >
             <Sparkles className="h-3.5 w-3.5 text-cyan-300 shrink-0" />
             <span className="font-mono text-[10px] sm:text-[11px] tracking-wider text-slate-100 whitespace-nowrap">
-              WELCOME TO AETHER // OS — GRAB, SCROLL-ZOOM, PINCH & ROTATE BOTH PHOTOS
+              PRESS & HOLD TO DRAG PHOTOS • CLICK UPLOAD OR DROP NEW IMAGES
             </span>
           </motion.div>
         )}
@@ -647,6 +840,7 @@ export default function App() {
               savedCount={savedCompositions.length}
               exporting={exporting}
               onModeChange={handleModeChange}
+              onUploadClick={() => uploadInputRef.current?.click()}
               onResetAll={handleResetAll}
               onToggleFullscreen={handleToggleFullscreen}
               onHideUI={() => setUiHidden(true)}
@@ -669,10 +863,12 @@ export default function App() {
               <LayerPanel
                 photos={photos}
                 selectedId={selectedId}
+                canDelete={photos.length > 2}
                 onSelect={(id) => {
                   playSound('select', settings.audioEnabled);
                   setSelectedId(id);
                 }}
+                onUploadClick={() => uploadInputRef.current?.click()}
                 onToggleVisible={(id) => {
                   playSound('click', settings.audioEnabled);
                   handleUpdatePhoto(id, (p) => ({ ...p, visible: !p.visible }));
@@ -689,10 +885,10 @@ export default function App() {
                   playSound('click', settings.audioEnabled);
                   handleSendBack(id);
                 }}
+                onDeletePhoto={handleDeletePhoto}
               />
             )}
 
-            {/* Bottom Mode Helper Status Bar */}
             <motion.div
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
@@ -717,6 +913,7 @@ export default function App() {
             mode={mode}
             lighting={lighting}
             playgroundPreset={playgroundPreset}
+            canDelete={photos.length > 2}
             onSelectPhoto={(id) => {
               playSound('select', settings.audioEnabled);
               setSelectedId(id);
@@ -726,6 +923,9 @@ export default function App() {
             onUpdateLighting={(patch) =>
               setLighting((prev) => ({ ...prev, ...patch }))
             }
+            onUploadClick={() => uploadInputRef.current?.click()}
+            onReplaceClick={() => replaceInputRef.current?.click()}
+            onDeletePhoto={handleDeletePhoto}
             onBringFront={handleBringFront}
             onSendBack={handleSendBack}
             onResetPhoto={handleResetOne}
@@ -740,7 +940,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Restore HUD Button when UI is hidden */}
+      {/* Restore HUD Button */}
       <AnimatePresence>
         {!booting && uiHidden && (
           <motion.button
