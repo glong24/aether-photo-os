@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Settings,
   Sparkles,
+  Upload,
 } from 'lucide-react';
 import { InteractionMode } from '../types';
 
@@ -25,6 +26,7 @@ interface TopNavBarProps {
   savedCount: number;
   exporting: boolean;
   onModeChange: (mode: InteractionMode) => void;
+  onUploadClick: () => void;
   onResetAll: () => void;
   onToggleFullscreen: () => void;
   onHideUI: () => void;
@@ -50,6 +52,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
   savedCount,
   exporting,
   onModeChange,
+  onUploadClick,
   onResetAll,
   onToggleFullscreen,
   onHideUI,
@@ -114,9 +117,21 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
       <div className="aether-glass pointer-events-auto order-2 lg:order-3 flex items-center gap-1 rounded-full p-1">
         <button
           type="button"
+          onClick={onUploadClick}
+          title="Upload New Photos"
+          className="flex items-center gap-1.5 rounded-full bg-gradient-to-r from-cyan-500/30 to-purple-500/30 border border-cyan-400/50 px-2.5 py-1.5 text-cyan-100 hover:from-cyan-500/45 hover:to-purple-500/45 transition shadow-[0_0_14px_rgba(56,189,248,0.25)]"
+        >
+          <Upload className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline font-mono text-[10px] uppercase tracking-wider">
+            Upload
+          </span>
+        </button>
+
+        <button
+          type="button"
           onClick={onOpenSaved}
           title="Save / Load Compositions"
-          className="relative flex items-center gap-1 rounded-full px-2.5 py-1.5 text-slate-300 hover:bg-white/10 hover:text-cyan-200 transition"
+          className="relative flex items-center gap-1 rounded-full px-2 py-1.5 text-slate-300 hover:bg-white/10 hover:text-cyan-200 transition"
         >
           <Bookmark className="h-3.5 w-3.5" />
           {savedCount > 0 && (
@@ -129,7 +144,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
           onClick={onExportPng}
           disabled={exporting}
           title="Export PNG Screenshot"
-          className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-slate-300 hover:bg-cyan-500/20 hover:text-cyan-200 disabled:opacity-50 transition"
+          className="flex items-center gap-1.5 rounded-full px-2 py-1.5 text-slate-300 hover:bg-cyan-500/20 hover:text-cyan-200 disabled:opacity-50 transition"
         >
           <Camera className="h-3.5 w-3.5" />
           <span className="hidden xl:inline font-mono text-[10px] uppercase tracking-wider">
