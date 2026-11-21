@@ -231,7 +231,7 @@ export async function exportCompositionToPng(
   const dataUrl = canvas.toDataURL('image/png');
   const link = document.createElement('a');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  link.download = `aether-os-${stamp}.png`;
+  link.download = `gia-long-${stamp}.png`;
   link.href = dataUrl;
   document.body.appendChild(link);
   link.click();
