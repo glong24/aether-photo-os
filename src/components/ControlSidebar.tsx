@@ -5,11 +5,14 @@ import {
   ArrowUp,
   FlipHorizontal2,
   FlipVertical2,
+  ImagePlus,
+  RefreshCw,
   RotateCcw,
   Shuffle,
   Sliders,
   Sparkles,
   SunMedium,
+  Trash2,
   X,
 } from 'lucide-react';
 import {
@@ -30,16 +33,20 @@ interface ControlSidebarProps {
   mode: InteractionMode;
   lighting: EnvironmentLighting;
   playgroundPreset: PlaygroundPreset;
-  onSelectPhoto: (id: PhotoItem['id']) => void;
+  canDelete: boolean;
+  onSelectPhoto: (id: string) => void;
   onUpdatePhoto: (
-    id: PhotoItem['id'],
+    id: string,
     updater: (prev: PhotoItem) => PhotoItem
   ) => void;
-  onUpdateEffects: (id: PhotoItem['id'], patch: Partial<PhotoEffects>) => void;
+  onUpdateEffects: (id: string, patch: Partial<PhotoEffects>) => void;
   onUpdateLighting: (patch: Partial<EnvironmentLighting>) => void;
-  onBringFront: (id: PhotoItem['id']) => void;
-  onSendBack: (id: PhotoItem['id']) => void;
-  onResetPhoto: (id: PhotoItem['id']) => void;
+  onUploadClick: () => void;
+  onReplaceClick: () => void;
+  onDeletePhoto: (id: string) => void;
+  onBringFront: (id: string) => void;
+  onSendBack: (id: string) => void;
+  onResetPhoto: (id: string) => void;
   onResetStageOrbit: () => void;
   onPlaygroundPreset: (preset: PlaygroundPreset) => void;
   onChaosRandomize: () => void;
@@ -125,10 +132,14 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
   mode,
   lighting,
   playgroundPreset,
+  canDelete,
   onSelectPhoto,
   onUpdatePhoto,
   onUpdateEffects,
   onUpdateLighting,
+  onUploadClick,
+  onReplaceClick,
+  onDeletePhoto,
   onBringFront,
   onSendBack,
   onResetPhoto,
@@ -163,7 +174,8 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-1.5">
+        {/* Dynamic Photo List */}
+        <div className="grid max-h-24 grid-cols-2 gap-1.5 overflow-y-auto glass-scroll pr-0.5">
           {photos.map((p) => {
             const active = p.id === selectedPhoto.id;
             return (
@@ -171,7 +183,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 key={p.id}
                 type="button"
                 onClick={() => onSelectPhoto(p.id)}
-                className={`flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-left transition border ${
+                className={`flex items-center gap-2 rounded-xl px-2 py-1.5 text-left transition border ${
                   active
                     ? 'bg-cyan-500/15 border-cyan-400/50 text-white shadow-[0_0_14px_rgba(56,189,248,0.18)]'
                     : 'bg-white/[0.03] border-white/10 text-slate-400 hover:text-slate-200'
@@ -184,7 +196,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 />
                 <div className="min-w-0">
                   <div className="truncate font-mono text-[10px] font-semibold">
-                    {p.id === 'photo-1' ? '01 MIRROR' : '02 COURT'}
+                    {p.name.replace('OBJ ', '')}
                   </div>
                   <div className="font-mono text-[9px] text-slate-400">
                     Z:{p.zIndex}
@@ -195,8 +207,28 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
           })}
         </div>
 
+        {/* Upload / Replace Quick Buttons */}
+        <div className="mt-2 grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            onClick={onUploadClick}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-cyan-400/40 bg-cyan-500/15 py-1.5 font-mono text-[10px] uppercase tracking-wider text-cyan-200 hover:bg-cyan-500/25 transition"
+          >
+            <ImagePlus className="h-3.5 w-3.5" />
+            Add Photo
+          </button>
+          <button
+            type="button"
+            onClick={onReplaceClick}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-purple-400/40 bg-purple-500/15 py-1.5 font-mono text-[10px] uppercase tracking-wider text-purple-200 hover:bg-purple-500/25 transition"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Replace
+          </button>
+        </div>
+
         {/* Section Tabs */}
-        <div className="mt-3 grid grid-cols-3 gap-1 rounded-xl bg-black/35 p-1 border border-white/10">
+        <div className="mt-2.5 grid grid-cols-3 gap-1 rounded-xl bg-black/35 p-1 border border-white/10">
           {[
             { id: 'transform' as const, label: 'Spatial', icon: <Sliders className="h-3 w-3" /> },
             { id: 'effects' as const, label: 'Effects', icon: <Sparkles className="h-3 w-3" /> },
@@ -221,10 +253,8 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
 
       {/* Scrollable Body */}
       <div className="flex-1 overflow-y-auto p-4 space-y-5 glass-scroll">
-        {/* TAB 1: SPATIAL TRANSFORM */}
         {tab === 'transform' && (
           <>
-            {/* Mode-Specific Quick Controls */}
             {mode === 'space3d' && (
               <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 space-y-2">
                 <div className="flex items-center justify-between">
@@ -240,7 +270,7 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                   </button>
                 </div>
                 <p className="text-[11px] text-slate-300 leading-relaxed">
-                  Drag the dark background to orbit both floating photos in 3D space.
+                  Drag the dark background to orbit all floating photos in 3D space.
                 </p>
               </div>
             )}
@@ -318,7 +348,6 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
               </div>
             )}
 
-            {/* Core Spatial Sliders */}
             <div className="space-y-3.5">
               <SliderRow
                 label="Scale"
@@ -355,8 +384,8 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 label="Position X"
                 valueDisplay={`${selectedPhoto.x}px`}
                 value={selectedPhoto.x}
-                min={-500}
-                max={500}
+                min={-600}
+                max={600}
                 onChange={(v) =>
                   onUpdatePhoto(selectedPhoto.id, (p) => ({ ...p, x: v }))
                 }
@@ -365,15 +394,14 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 label="Position Y"
                 valueDisplay={`${selectedPhoto.y}px`}
                 value={selectedPhoto.y}
-                min={-350}
-                max={350}
+                min={-400}
+                max={400}
                 onChange={(v) =>
                   onUpdatePhoto(selectedPhoto.id, (p) => ({ ...p, y: v }))
                 }
               />
             </div>
 
-            {/* Action Grid */}
             <div className="grid grid-cols-2 gap-2 pt-1">
               <button
                 type="button"
@@ -421,21 +449,31 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
               </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => onResetPhoto(selectedPhoto.id)}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] py-2 text-xs text-slate-300 hover:border-rose-400/40 hover:bg-rose-500/15 hover:text-rose-200 transition"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Reset Selected Photo
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => onResetPhoto(selectedPhoto.id)}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] py-2 text-xs text-slate-300 hover:border-cyan-400/40 hover:bg-cyan-500/15 hover:text-cyan-200 transition"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset Photo
+              </button>
+              {canDelete && (
+                <button
+                  type="button"
+                  onClick={() => onDeletePhoto(selectedPhoto.id)}
+                  title="Delete Selected Photo"
+                  className="flex items-center justify-center gap-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300 hover:bg-rose-500/25 transition"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </>
         )}
 
-        {/* TAB 2: ADVANCED REAL-TIME VISUAL EFFECTS */}
         {tab === 'effects' && (
           <div className="space-y-4">
-            {/* Neon Glow + Color Picker */}
             <div className="space-y-2.5">
               <SliderRow
                 label="Neon Glow"
@@ -486,7 +524,6 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
               onChange={(v) => onUpdateEffects(selectedPhoto.id, { glitch: v })}
             />
 
-            {/* Color Grade Filters */}
             <div className="space-y-2">
               <span className="text-[11px] text-slate-300">Color Filter Grade</span>
               <div className="flex flex-wrap gap-1.5">
@@ -581,7 +618,6 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
           </div>
         )}
 
-        {/* TAB 3: ENVIRONMENT LIGHTING & ATMOSPHERE */}
         {tab === 'lighting' && (
           <div className="space-y-4">
             <div className="space-y-2">
@@ -648,7 +684,11 @@ export const ControlSidebar: React.FC<ControlSidebarProps> = ({
                 <button
                   key={toggle.key}
                   type="button"
-                  onClick={() => onUpdateLighting({ [toggle.key]: !toggle.val } as Partial<EnvironmentLighting>)}
+                  onClick={() =>
+                    onUpdateLighting({
+                      [toggle.key]: !toggle.val,
+                    } as Partial<EnvironmentLighting>)
+                  }
                   className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs text-slate-200 hover:bg-white/[0.07] transition"
                 >
                   <span>{toggle.label}</span>
