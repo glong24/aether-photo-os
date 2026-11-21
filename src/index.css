@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #03040a;
+    color: #f1f5f9;
+    font-family: 'Inter', system-ui, sans-serif;
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Custom sleek scrollbars for glass panels */
+.glass-scroll::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.glass-scroll::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.25);
+  border-radius: 9999px;
+}
+
+.glass-scroll::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.35);
+  border-radius: 9999px;
+}
+
+.glass-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 189, 248, 0.6);
+}
+
+/* Range input styling */
+input[type='range'].aether-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.28), rgba(168, 85, 247, 0.35));
+  outline: none;
+}
+
+input[type='range'].aether-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #e0f2fe;
+  border: 2px solid #38bdf8;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.85);
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+input[type='range'].aether-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
+  box-shadow: 0 0 18px rgba(34, 211, 238, 1);
+}
+
+input[type='range'].aether-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #e0f2fe;
+  border: 2px solid #38bdf8;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.85);
+  cursor: pointer;
+}
+
+/* Glitch animations */
+@keyframes glitchShiftA {
+  0%, 100% { transform: translate(0, 0); clip-path: inset(8% 0 74% 0); }
+  20% { transform: translate(-7px, 2px); clip-path: inset(28% 0 54% 0); }
+  40% { transform: translate(8px, -2px); clip-path: inset(60% 0 20% 0); }
+  60% { transform: translate(-5px, 1px); clip-path: inset(15% 0 65% 0); }
+  80% { transform: translate(6px, -1px); clip-path: inset(75% 0 8% 0); }
+}
+
+@keyframes glitchShiftB {
+  0%, 100% { transform: translate(0, 0); clip-path: inset(62% 0 16% 0); }
+  25% { transform: translate(7px, -2px); clip-path: inset(42% 0 38% 0); }
+  50% { transform: translate(-8px, 2px); clip-path: inset(12% 0 70% 0); }
+  75% { transform: translate(5px, -1px); clip-path: inset(80% 0 5% 0); }
+}
+
+.glitch-layer-a {
+  animation: glitchShiftA 1.15s infinite steps(2, end);
+}
+
+.glitch-layer-b {
+  animation: glitchShiftB 0.95s infinite steps(2, end);
+}
+
+/* Floating subtle ambient motion */
+@keyframes floatSlow {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-9px); }
+}
+
+.animate-float-slow {
+  animation: floatSlow 5.5s ease-in-out infinite;
+}
+
+/* Holo perspective floor grid */
+.holo-floor-grid {
+  background-image:
+    linear-gradient(to right, rgba(56, 189, 248, 0.16) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(168, 85, 247, 0.16) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* Glassmorphism utility */
+.aether-glass {
+  background: linear-gradient(145deg, rgba(15, 21, 38, 0.72), rgba(7, 10, 20, 0.82));
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
