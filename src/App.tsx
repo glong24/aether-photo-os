@@ -90,6 +90,7 @@ export default function App() {
 
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const replaceInputRef = useRef<HTMLInputElement | null>(null);
+  const isAnyDraggingRef = useRef(false);
 
   const [stageOrbit, setStageOrbit] = useState({ rx: 8, ry: -10 });
   const orbitingRef = useRef(false);
@@ -135,24 +136,28 @@ export default function App() {
 
   useEffect(() => {
     let raf = 0;
-    const onPointerMove = (e: PointerEvent) => {
+    const onMouseMove = (e: MouseEvent) => {
       const normX = (e.clientX / window.innerWidth - 0.5) * 2;
       const normY = (e.clientY / window.innerHeight - 0.5) * 2;
       pointerRef.current = { x: e.clientX, y: e.clientY, normX, normY };
 
+      if (isAnyDraggingRef.current) return;
+
       if (!raf) {
         raf = requestAnimationFrame(() => {
-          setParallaxOffset({
-            x: Number((normX * -14).toFixed(2)),
-            y: Number((normY * -12).toFixed(2)),
-          });
+          if (!isAnyDraggingRef.current) {
+            setParallaxOffset({
+              x: Number((normX * -14).toFixed(2)),
+              y: Number((normY * -12).toFixed(2)),
+            });
+          }
           raf = 0;
         });
       }
     };
-    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('mousemove', onMouseMove, { passive: true });
     return () => {
-      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('mousemove', onMouseMove);
       if (raf) cancelAnimationFrame(raf);
     };
   }, []);
@@ -220,7 +225,6 @@ export default function App() {
     return () => cancelAnimationFrame(raf);
   }, [mode, playgroundPreset, viewportWidth]);
 
-  // Add uploaded image files onto the canvas
   const mountUploadedFiles = useCallback(
     async (fileList: FileList | File[]) => {
       const imageFiles = Array.from(fileList).filter((f) =>
@@ -421,7 +425,13 @@ export default function App() {
         prev.map((p) => {
           if (p.id !== id) return p;
           if (targetDefault) {
-            return { ...targetDefault, src: p.src, name: p.name, aspectRatio: p.aspectRatio, effects: p.effects };
+            return {
+              ...targetDefault,
+              src: p.src,
+              name: p.name,
+              aspectRatio: p.aspectRatio,
+              effects: p.effects,
+            };
           }
           return {
             ...p,
@@ -514,7 +524,7 @@ export default function App() {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
       } catch {
-        // Ignore storage quota errors for large uploaded images
+        // Ignore storage quota errors
       }
       showToast(`Saved "${name}"`);
     },
@@ -590,7 +600,7 @@ export default function App() {
 
   const baseCardWidth = viewportWidth < 640 ? 195 : viewportWidth < 1024 ? 245 : 288;
 
-  const handleStagePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handleStageMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (mode !== 'space3d') return;
     orbitingRef.current = true;
     orbitOrigin.current = {
@@ -601,7 +611,7 @@ export default function App() {
     };
   };
 
-  const handleStagePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+  const handleStageMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!orbitingRef.current || mode !== 'space3d') return;
     const dx = e.clientX - orbitOrigin.current.x;
     const dy = e.clientY - orbitOrigin.current.y;
@@ -611,7 +621,7 @@ export default function App() {
     });
   };
 
-  const handleStagePointerUp = () => {
+  const handleStageMouseUp = () => {
     orbitingRef.current = false;
   };
 
@@ -643,7 +653,6 @@ export default function App() {
       onDrop={handleCanvasDrop}
       className="relative h-screen w-screen overflow-hidden bg-[#03040a] text-slate-100 select-none"
     >
-      {/* Hidden File Inputs for Upload & Replace */}
       <input
         ref={uploadInputRef}
         type="file"
@@ -660,10 +669,8 @@ export default function App() {
         onChange={handleReplaceInputChange}
       />
 
-      {/* Live HTML5 Spatial Background Canvas */}
       <AmbientCanvas lighting={lighting} mode={mode} pointerRef={pointerRef} />
 
-      {/* Drag-and-drop File Upload Overlay */}
       <AnimatePresence>
         {isFileDragOver && (
           <motion.div
@@ -683,7 +690,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Cinematic Boot Intro */}
       <AnimatePresence>
         {booting && (
           <BootSequence
@@ -693,7 +699,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Cinematic Letterbox & Vignette */}
       <AnimatePresence>
         {mode === 'cinematic' && (
           <>
@@ -720,7 +725,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Magnetic Alignment Laser Guides */}
       {snapGuides.vertical !== null && (
         <div
           className="pointer-events-none fixed top-0 bottom-0 z-20 w-px bg-cyan-400/80 shadow-[0_0_12px_#22d3ee]"
@@ -734,17 +738,16 @@ export default function App() {
         />
       )}
 
-      {/* CENTRAL INTERACTIVE WORKSPACE */}
       {!booting && (
         <main
-          onPointerDown={handleStagePointerDown}
-          onPointerMove={handleStagePointerMove}
-          onPointerUp={handleStagePointerUp}
-          onPointerLeave={handleStagePointerUp}
+          onMouseDown={handleStageMouseDown}
+          onMouseMove={handleStageMouseMove}
+          onMouseUp={handleStageMouseUp}
+          onMouseLeave={handleStageMouseUp}
           className={`relative z-10 h-full w-full ${
             mode === 'space3d' ? 'cursor-move' : ''
           }`}
-          style={{ perspective: mode === 'space3d' ? '1350px' : '1100px' }}
+          style={{ perspective: mode === 'space3d' ? '1350px' : 'none' }}
         >
           {mode === 'compare' ? (
             <CompareStage
@@ -759,7 +762,7 @@ export default function App() {
             <div
               className="relative h-full w-full transition-transform duration-200 ease-out"
               style={{
-                transformStyle: 'preserve-3d',
+                transformStyle: mode === 'space3d' ? 'preserve-3d' : 'flat',
                 transform:
                   mode === 'space3d'
                     ? `rotateX(${stageOrbit.rx}deg) rotateY(${stageOrbit.ry}deg)`
@@ -803,6 +806,9 @@ export default function App() {
                     onSendBack={handleSendBack}
                     onResetOne={handleResetOne}
                     onSnapGuidesChange={setSnapGuides}
+                    onDragStateChange={(dragging) => {
+                      isAnyDraggingRef.current = dragging;
+                    }}
                   />
                 );
               })}
@@ -811,7 +817,6 @@ export default function App() {
         </main>
       )}
 
-      {/* Futuristic Welcome Banner */}
       <AnimatePresence>
         {showWelcome && !uiHidden && (
           <motion.div
@@ -829,7 +834,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* HUD OVERLAYS */}
       <AnimatePresence>
         {!booting && !uiHidden && (
           <>
@@ -904,7 +908,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Collapsible Right Spatial Control Sidebar */}
       <AnimatePresence>
         {!booting && !uiHidden && sidebarOpen && (
           <ControlSidebar
@@ -940,7 +943,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Restore HUD Button */}
       <AnimatePresence>
         {!booting && uiHidden && (
           <motion.button
@@ -957,7 +959,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Modals */}
       <AnimatePresence>
         {settingsOpen && (
           <SettingsModal
@@ -980,7 +981,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Floating Toast Feedback */}
       <AnimatePresence>
         {toast && (
           <motion.div
