@@ -76,7 +76,7 @@ export const TopNavBar: React.FC<TopNavBarProps> = ({
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cyan-300 shadow-[0_0_10px_#22d3ee]" />
         </span>
         <span className="font-display text-xs sm:text-sm font-semibold tracking-[0.2em] text-white">
-          AETHER <span className="text-cyan-400">//</span> OS
+          GIA <span className="text-cyan-400">LONG</span>
         </span>
       </div>
 
