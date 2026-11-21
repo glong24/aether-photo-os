@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   ArrowDown,
@@ -20,27 +20,27 @@ import { playSound } from '../utils/audio';
 
 interface SpatialPhotoCardProps {
   photo: PhotoItem;
-  otherPhoto: PhotoItem;
+  otherPhotos: PhotoItem[];
   isSelected: boolean;
   mode: InteractionMode;
   settings: AppSettings;
   parallaxOffset: { x: number; y: number };
   baseWidth: number;
   uiHidden: boolean;
-  onSelect: (id: PhotoItem['id']) => void;
+  onSelect: (id: string) => void;
   onUpdate: (
-    id: PhotoItem['id'],
+    id: string,
     updater: (prev: PhotoItem) => PhotoItem
   ) => void;
-  onBringFront: (id: PhotoItem['id']) => void;
-  onSendBack: (id: PhotoItem['id']) => void;
-  onResetOne: (id: PhotoItem['id']) => void;
+  onBringFront: (id: string) => void;
+  onSendBack: (id: string) => void;
+  onResetOne: (id: string) => void;
   onSnapGuidesChange: (guides: SnapGuides) => void;
 }
 
 export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   photo,
-  otherPhoto,
+  otherPhotos,
   isSelected,
   mode,
   settings,
@@ -56,11 +56,11 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
 }) => {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const photoRef = useRef(photo);
-  const otherRef = useRef(otherPhoto);
+  const othersRef = useRef(otherPhotos);
   const settingsRef = useRef(settings);
 
   photoRef.current = photo;
-  otherRef.current = otherPhoto;
+  othersRef.current = otherPhotos;
   settingsRef.current = settings;
 
   const [isHovered, setIsHovered] = useState(false);
@@ -93,17 +93,14 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   });
   const lastTapTime = useRef<number>(0);
 
-  const stopInertia = () => {
+  const stopInertia = useCallback(() => {
     if (inertiaRaf.current !== null) {
       cancelAnimationFrame(inertiaRaf.current);
       inertiaRaf.current = null;
     }
-  };
-
-  useEffect(() => {
-    return () => stopInertia();
   }, []);
 
+  // Native non-passive wheel listener for smooth zoom
   useEffect(() => {
     const el = cardRef.current;
     if (!el) return;
@@ -126,10 +123,197 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
     return () => el.removeEventListener('wheel', handleWheel);
   }, [onSelect, onUpdate]);
 
+  // Global window pointer move / up handlers for 100% reliable 1:1 cursor tracking
+  const handleWindowPointerMove = useCallback(
+    (e: PointerEvent) => {
+      if (!activePointers.current.has(e.pointerId) || photoRef.current.locked) {
+        return;
+      }
+
+      activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      // Two-finger pinch zoom & rotate on touchscreens
+      if (activePointers.current.size === 2 && pinchOrigin.current) {
+        const pts = Array.from(activePointers.current.values());
+        const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        const angle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
+
+        const scaleRatio = dist / pinchOrigin.current.distance;
+        const angleDeltaDeg = ((angle - pinchOrigin.current.angle) * 180) / Math.PI;
+
+        const nextScale = Math.max(
+          0.35,
+          Math.min(2.8, pinchOrigin.current.scale * scaleRatio)
+        );
+        const nextRot = ((pinchOrigin.current.rotation + angleDeltaDeg + 180) % 360) - 180;
+
+        onUpdate(photoRef.current.id, (prev) => ({
+          ...prev,
+          scale: Number(nextScale.toFixed(3)),
+          rotation: Math.round(nextRot),
+        }));
+        return;
+      }
+
+      // Single-pointer 1:1 cursor dragging
+      if (activePointers.current.size === 1) {
+        const now = performance.now();
+        const dt = Math.max(8, now - dragOrigin.current.lastTime);
+        const instVx = ((e.clientX - dragOrigin.current.lastX) / dt) * 16;
+        const instVy = ((e.clientY - dragOrigin.current.lastY) / dt) * 16;
+
+        dragOrigin.current.vx = dragOrigin.current.vx * 0.6 + instVx * 0.4;
+        dragOrigin.current.vy = dragOrigin.current.vy * 0.6 + instVy * 0.4;
+        dragOrigin.current.lastX = e.clientX;
+        dragOrigin.current.lastY = e.clientY;
+        dragOrigin.current.lastTime = now;
+
+        const dx = e.clientX - dragOrigin.current.pointerX;
+        const dy = e.clientY - dragOrigin.current.pointerY;
+
+        let nextX = dragOrigin.current.photoX + dx;
+        let nextY = dragOrigin.current.photoY + dy;
+
+        let guideV: number | null = null;
+        let guideH: number | null = null;
+
+        if (settingsRef.current.magneticSnap && Math.hypot(dx, dy) > 12) {
+          const threshold = 9;
+          if (Math.abs(nextX) < threshold) {
+            nextX = 0;
+            guideV = 0;
+          } else {
+            for (const other of othersRef.current) {
+              if (other.visible && Math.abs(nextX - other.x) < threshold) {
+                nextX = other.x;
+                guideV = other.x;
+                break;
+              }
+            }
+          }
+
+          if (Math.abs(nextY) < threshold) {
+            nextY = 0;
+            guideH = 0;
+          } else {
+            for (const other of othersRef.current) {
+              if (other.visible && Math.abs(nextY - other.y) < threshold) {
+                nextY = other.y;
+                guideH = other.y;
+                break;
+              }
+            }
+          }
+
+          if (
+            (guideV !== null && lastSnapState.current.v !== guideV) ||
+            (guideH !== null && lastSnapState.current.h !== guideH)
+          ) {
+            playSound('snap', settingsRef.current.audioEnabled);
+          }
+          lastSnapState.current = { v: guideV, h: guideH };
+        }
+
+        onSnapGuidesChange({ vertical: guideV, horizontal: guideH });
+
+        const boundX = Math.max(360, window.innerWidth * 0.48);
+        const boundY = Math.max(260, window.innerHeight * 0.46);
+        nextX = Math.max(-boundX, Math.min(boundX, nextX));
+        nextY = Math.max(-boundY, Math.min(boundY, nextY));
+
+        onUpdate(photoRef.current.id, (prev) => ({
+          ...prev,
+          x: Math.round(nextX),
+          y: Math.round(nextY),
+        }));
+      }
+    },
+    [onSnapGuidesChange, onUpdate]
+  );
+
+  const cleanupWindowListeners = useCallback(() => {
+    window.removeEventListener('pointermove', handleWindowPointerMove);
+    window.removeEventListener('pointerup', handleWindowPointerUpRef.current);
+    window.removeEventListener('pointercancel', handleWindowPointerUpRef.current);
+    window.removeEventListener('blur', handleWindowBlurRef.current);
+  }, [handleWindowPointerMove]);
+
+  const handleWindowPointerUp = useCallback(
+    (e: PointerEvent) => {
+      if (!activePointers.current.has(e.pointerId)) return;
+      activePointers.current.delete(e.pointerId);
+
+      if (activePointers.current.size === 0) {
+        cleanupWindowListeners();
+        isDraggingRef.current = false;
+        setIsDragging(false);
+        onSnapGuidesChange({ vertical: null, horizontal: null });
+        lastSnapState.current = { v: null, h: null };
+
+        if (settingsRef.current.inertiaEnabled && !pinchOrigin.current) {
+          let vx = dragOrigin.current.vx;
+          let vy = dragOrigin.current.vy;
+          const speed = Math.hypot(vx, vy);
+
+          if (speed > 1.5) {
+            const id = photoRef.current.id;
+            const boundX = Math.max(360, window.innerWidth * 0.48);
+            const boundY = Math.max(260, window.innerHeight * 0.46);
+
+            const glide = () => {
+              vx *= 0.9;
+              vy *= 0.9;
+              if (Math.hypot(vx, vy) < 0.3) {
+                inertiaRaf.current = null;
+                return;
+              }
+              onUpdate(id, (prev) => ({
+                ...prev,
+                x: Math.round(Math.max(-boundX, Math.min(boundX, prev.x + vx))),
+                y: Math.round(Math.max(-boundY, Math.min(boundY, prev.y + vy))),
+              }));
+              inertiaRaf.current = requestAnimationFrame(glide);
+            };
+
+            inertiaRaf.current = requestAnimationFrame(glide);
+          }
+        }
+        pinchOrigin.current = null;
+      }
+    },
+    [cleanupWindowListeners, onSnapGuidesChange, onUpdate]
+  );
+
+  const handleWindowBlur = useCallback(() => {
+    activePointers.current.clear();
+    cleanupWindowListeners();
+    isDraggingRef.current = false;
+    setIsDragging(false);
+    pinchOrigin.current = null;
+    onSnapGuidesChange({ vertical: null, horizontal: null });
+  }, [cleanupWindowListeners, onSnapGuidesChange]);
+
+  const handleWindowPointerUpRef = useRef(handleWindowPointerUp);
+  const handleWindowBlurRef = useRef(handleWindowBlur);
+  handleWindowPointerUpRef.current = handleWindowPointerUp;
+  handleWindowBlurRef.current = handleWindowBlur;
+
+  useEffect(() => {
+    return () => {
+      stopInertia();
+      cleanupWindowListeners();
+    };
+  }, [cleanupWindowListeners, stopInertia]);
+
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('[data-no-drag="true"]')) {
       return;
     }
+    if (e.pointerType === 'mouse' && e.button !== 0) {
+      return;
+    }
+
+    e.preventDefault();
     e.stopPropagation();
     stopInertia();
 
@@ -148,7 +332,11 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
 
     if (photo.locked) return;
 
-    e.currentTarget.setPointerCapture(e.pointerId);
+    // Prevent stale pointers from ever blocking mouse drag
+    if (e.pointerType === 'mouse') {
+      activePointers.current.clear();
+    }
+
     activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (activePointers.current.size === 1) {
@@ -158,8 +346,8 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
       dragOrigin.current = {
         pointerX: e.clientX,
         pointerY: e.clientY,
-        photoX: photo.x,
-        photoY: photo.y,
+        photoX: photoRef.current.x,
+        photoY: photoRef.current.y,
         lastX: e.clientX,
         lastY: e.clientY,
         lastTime: now,
@@ -167,6 +355,11 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
         vy: 0,
       };
       pinchOrigin.current = null;
+
+      window.addEventListener('pointermove', handleWindowPointerMove);
+      window.addEventListener('pointerup', handleWindowPointerUpRef.current);
+      window.addEventListener('pointercancel', handleWindowPointerUpRef.current);
+      window.addEventListener('blur', handleWindowBlurRef.current);
     } else if (activePointers.current.size === 2) {
       const pts = Array.from(activePointers.current.values());
       const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
@@ -174,158 +367,26 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
       pinchOrigin.current = {
         distance: Math.max(10, dist),
         angle,
-        scale: photo.scale,
-        rotation: photo.rotation,
+        scale: photoRef.current.scale,
+        rotation: photoRef.current.rotation,
       };
     }
   };
 
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isDraggingRef.current && settingsRef.current.tilt3D && cardRef.current) {
-      const rect = cardRef.current.getBoundingClientRect();
-      const relX = (e.clientX - rect.left) / rect.width;
-      const relY = (e.clientY - rect.top) / rect.height;
-      const maxTilt = mode === 'space3d' ? 16 : 11;
-      setTilt({
-        rx: (0.5 - relY) * maxTilt * 2,
-        ry: (relX - 0.5) * maxTilt * 2,
-        glareX: relX * 100,
-        glareY: relY * 100,
-      });
-    }
-
-    if (!activePointers.current.has(e.pointerId) || photoRef.current.locked) {
+  const handleHoverMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isDraggingRef.current || !settingsRef.current.tilt3D || !cardRef.current) {
       return;
     }
-
-    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-    if (activePointers.current.size === 2 && pinchOrigin.current) {
-      const pts = Array.from(activePointers.current.values());
-      const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
-      const angle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x);
-
-      const scaleRatio = dist / pinchOrigin.current.distance;
-      const angleDeltaDeg = ((angle - pinchOrigin.current.angle) * 180) / Math.PI;
-
-      const nextScale = Math.max(
-        0.35,
-        Math.min(2.8, pinchOrigin.current.scale * scaleRatio)
-      );
-      const nextRot = ((pinchOrigin.current.rotation + angleDeltaDeg + 180) % 360) - 180;
-
-      onUpdate(photoRef.current.id, (prev) => ({
-        ...prev,
-        scale: Number(nextScale.toFixed(3)),
-        rotation: Math.round(nextRot),
-      }));
-      return;
-    }
-
-    if (activePointers.current.size === 1) {
-      const now = performance.now();
-      const dt = Math.max(8, now - dragOrigin.current.lastTime);
-      const instVx = ((e.clientX - dragOrigin.current.lastX) / dt) * 16;
-      const instVy = ((e.clientY - dragOrigin.current.lastY) / dt) * 16;
-
-      dragOrigin.current.vx = dragOrigin.current.vx * 0.6 + instVx * 0.4;
-      dragOrigin.current.vy = dragOrigin.current.vy * 0.6 + instVy * 0.4;
-      dragOrigin.current.lastX = e.clientX;
-      dragOrigin.current.lastY = e.clientY;
-      dragOrigin.current.lastTime = now;
-
-      let nextX = dragOrigin.current.photoX + (e.clientX - dragOrigin.current.pointerX);
-      let nextY = dragOrigin.current.photoY + (e.clientY - dragOrigin.current.pointerY);
-
-      let guideV: number | null = null;
-      let guideH: number | null = null;
-
-      if (settingsRef.current.magneticSnap) {
-        const threshold = 14;
-        const other = otherRef.current;
-
-        if (Math.abs(nextX) < threshold) {
-          nextX = 0;
-          guideV = 0;
-        } else if (other.visible && Math.abs(nextX - other.x) < threshold) {
-          nextX = other.x;
-          guideV = other.x;
-        }
-
-        if (Math.abs(nextY) < threshold) {
-          nextY = 0;
-          guideH = 0;
-        } else if (other.visible && Math.abs(nextY - other.y) < threshold) {
-          nextY = other.y;
-          guideH = other.y;
-        }
-
-        if (
-          (guideV !== null && lastSnapState.current.v !== guideV) ||
-          (guideH !== null && lastSnapState.current.h !== guideH)
-        ) {
-          playSound('snap', settingsRef.current.audioEnabled);
-        }
-        lastSnapState.current = { v: guideV, h: guideH };
-      }
-
-      onSnapGuidesChange({ vertical: guideV, horizontal: guideH });
-
-      const boundX = Math.max(320, window.innerWidth * 0.46);
-      const boundY = Math.max(240, window.innerHeight * 0.44);
-      nextX = Math.max(-boundX, Math.min(boundX, nextX));
-      nextY = Math.max(-boundY, Math.min(boundY, nextY));
-
-      onUpdate(photoRef.current.id, (prev) => ({
-        ...prev,
-        x: Math.round(nextX),
-        y: Math.round(nextY),
-      }));
-    }
-  };
-
-  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
-    activePointers.current.delete(e.pointerId);
-
-    if (activePointers.current.size === 0) {
-      isDraggingRef.current = false;
-      setIsDragging(false);
-      onSnapGuidesChange({ vertical: null, horizontal: null });
-      lastSnapState.current = { v: null, h: null };
-
-      if (settingsRef.current.inertiaEnabled && !pinchOrigin.current) {
-        let vx = dragOrigin.current.vx;
-        let vy = dragOrigin.current.vy;
-        const speed = Math.hypot(vx, vy);
-
-        if (speed > 1.2) {
-          const id = photoRef.current.id;
-          const boundX = Math.max(320, window.innerWidth * 0.46);
-          const boundY = Math.max(240, window.innerHeight * 0.44);
-
-          const glide = () => {
-            vx *= 0.91;
-            vy *= 0.91;
-            if (Math.hypot(vx, vy) < 0.28) {
-              inertiaRaf.current = null;
-              return;
-            }
-            onUpdate(id, (prev) => ({
-              ...prev,
-              x: Math.round(Math.max(-boundX, Math.min(boundX, prev.x + vx))),
-              y: Math.round(Math.max(-boundY, Math.min(boundY, prev.y + vy))),
-            }));
-            inertiaRaf.current = requestAnimationFrame(glide);
-          };
-
-          inertiaRaf.current = requestAnimationFrame(glide);
-        }
-      }
-      pinchOrigin.current = null;
-    }
+    const rect = cardRef.current.getBoundingClientRect();
+    const relX = (e.clientX - rect.left) / rect.width;
+    const relY = (e.clientY - rect.top) / rect.height;
+    const maxTilt = mode === 'space3d' ? 16 : 11;
+    setTilt({
+      rx: (0.5 - relY) * maxTilt * 2,
+      ry: (relX - 0.5) * maxTilt * 2,
+      glareX: relX * 100,
+      glareY: relY * 100,
+    });
   };
 
   const handleRotateDialDown = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -362,7 +423,11 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
 
   if (!photo.visible) return null;
 
-  const cardHeight = Math.round(baseWidth / photo.aspectRatio);
+  // Smart proportional sizing for both portrait & landscape uploaded photos
+  const cardWidth =
+    photo.aspectRatio > 1.05 ? Math.round(baseWidth * 1.35) : baseWidth;
+  const cardHeight = Math.round(cardWidth / photo.aspectRatio);
+
   const depthFactor = 0.65 + (photo.z + 300) / 600;
   const pxOffset = settings.parallax && !isDragging ? parallaxOffset.x * depthFactor : 0;
   const pyOffset = settings.parallax && !isDragging ? parallaxOffset.y * depthFactor : 0;
@@ -398,10 +463,10 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   return (
     <div
       ref={cardRef}
+      draggable={false}
+      onDragStart={(e) => e.preventDefault()}
       onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
+      onPointerMove={handleHoverMove}
       onDoubleClick={(e) => {
         e.stopPropagation();
         if (!photo.locked) onResetOne(photo.id);
@@ -415,7 +480,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
         position: 'absolute',
         left: '50%',
         top: '50%',
-        width: `${baseWidth}px`,
+        width: `${cardWidth}px`,
         height: `${cardHeight}px`,
         zIndex: photo.zIndex,
         transform: transformString,
@@ -426,7 +491,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
         willChange: 'transform',
         transition: isDragging
           ? 'none'
-          : 'transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease',
+          : 'transform 0.14s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease',
       }}
       className={`group rounded-[22px] ${
         photo.locked
@@ -528,7 +593,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
             </>
           )}
 
-          {settings.tilt3D && isHovered && (
+          {settings.tilt3D && isHovered && !isDragging && (
             <div
               className="pointer-events-none absolute inset-0 transition-opacity duration-200"
               style={{
@@ -548,19 +613,19 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
 
           {!uiHidden && (isHovered || isSelected) && (
             <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center justify-between rounded-xl bg-black/55 px-2.5 py-1.5 backdrop-blur-md border border-white/10">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 min-w-0">
                 <span
-                  className="h-1.5 w-1.5 rounded-full"
+                  className="h-1.5 w-1.5 shrink-0 rounded-full"
                   style={{
                     backgroundColor: photo.effects.neonColor,
                     boxShadow: `0 0 8px ${photo.effects.neonColor}`,
                   }}
                 />
-                <span className="font-mono text-[10px] font-medium tracking-wider text-white/90">
+                <span className="truncate font-mono text-[10px] font-medium tracking-wider text-white/90">
                   {photo.name}
                 </span>
               </div>
-              <span className="font-mono text-[9px] text-slate-300/80">
+              <span className="ml-2 shrink-0 font-mono text-[9px] text-slate-300/80">
                 {photo.locked ? (
                   <Lock className="inline h-3 w-3 text-amber-300" />
                 ) : (
