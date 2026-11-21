@@ -65,10 +65,10 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
 
   const [isHovered, setIsHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const isDraggingRef = useRef(false);
   const [tilt, setTilt] = useState({ rx: 0, ry: 0, glareX: 50, glareY: 50 });
 
-  // Multi-pointer tracking for drag + mobile pinch-zoom & two-finger rotate
-  const activePointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const activePointers = useRef>(new Map());
   const dragOrigin = useRef({
     pointerX: 0,
     pointerY: 0,
@@ -93,7 +93,6 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   });
   const lastTapTime = useRef<number>(0);
 
-  // Stop any active inertia animation
   const stopInertia = () => {
     if (inertiaRaf.current !== null) {
       cancelAnimationFrame(inertiaRaf.current);
@@ -105,7 +104,6 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
     return () => stopInertia();
   }, []);
 
-  // Native non-passive wheel listener so zooming over a photo never scrolls the page
   useEffect(() => {
     const el = cardRef.current;
     if (!el) return;
@@ -129,7 +127,6 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   }, [onSelect, onUpdate]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    // Allow interactive buttons inside floating toolbar to work normally
     if ((e.target as HTMLElement).closest('[data-no-drag="true"]')) {
       return;
     }
@@ -141,7 +138,6 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
       onBringFront(photo.id);
     }
 
-    // Double-tap reset on touch devices
     const now = performance.now();
     if (e.pointerType === 'touch' && now - lastTapTime.current < 300) {
       lastTapTime.current = 0;
@@ -156,7 +152,9 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
     activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (activePointers.current.size === 1) {
+      isDraggingRef.current = true;
       setIsDragging(true);
+      setTilt({ rx: 0, ry: 0, glareX: 50, glareY: 50 });
       dragOrigin.current = {
         pointerX: e.clientX,
         pointerY: e.clientY,
@@ -183,8 +181,7 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    // 3D Tilt on hover when not dragging
-    if (!isDragging && settingsRef.current.tilt3D && cardRef.current) {
+    if (!isDraggingRef.current && settingsRef.current.tilt3D && cardRef.current) {
       const rect = cardRef.current.getBoundingClientRect();
       const relX = (e.clientX - rect.left) / rect.width;
       const relY = (e.clientY - rect.top) / rect.height;
@@ -203,7 +200,6 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
 
     activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
-    // Multi-touch Pinch Zoom & Two-Finger Rotate
     if (activePointers.current.size === 2 && pinchOrigin.current) {
       const pts = Array.from(activePointers.current.values());
       const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
@@ -226,7 +222,6 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
       return;
     }
 
-    // Single-pointer smooth dragging + magnetic snapping
     if (activePointers.current.size === 1) {
       const now = performance.now();
       const dt = Math.max(8, now - dragOrigin.current.lastTime);
@@ -276,8 +271,8 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
 
       onSnapGuidesChange({ vertical: guideV, horizontal: guideH });
 
-      const boundX = window.innerWidth * 0.65;
-      const boundY = window.innerHeight * 0.65;
+      const boundX = Math.max(320, window.innerWidth * 0.46);
+      const boundY = Math.max(240, window.innerHeight * 0.44);
       nextX = Math.max(-boundX, Math.min(boundX, nextX));
       nextY = Math.max(-boundY, Math.min(boundY, nextY));
 
@@ -296,11 +291,11 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
     activePointers.current.delete(e.pointerId);
 
     if (activePointers.current.size === 0) {
+      isDraggingRef.current = false;
       setIsDragging(false);
       onSnapGuidesChange({ vertical: null, horizontal: null });
       lastSnapState.current = { v: null, h: null };
 
-      // Smooth inertia glide upon release
       if (settingsRef.current.inertiaEnabled && !pinchOrigin.current) {
         let vx = dragOrigin.current.vx;
         let vy = dragOrigin.current.vy;
@@ -308,8 +303,8 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
 
         if (speed > 1.2) {
           const id = photoRef.current.id;
-          const boundX = window.innerWidth * 0.65;
-          const boundY = window.innerHeight * 0.65;
+          const boundX = Math.max(320, window.innerWidth * 0.46);
+          const boundY = Math.max(240, window.innerHeight * 0.44);
 
           const glide = () => {
             vx *= 0.91;
@@ -333,7 +328,6 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
     }
   };
 
-  // Interactive circular drag-to-rotate dial on the floating quick toolbar
   const handleRotateDialDown = (e: React.PointerEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     e.preventDefault();
@@ -370,8 +364,8 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
 
   const cardHeight = Math.round(baseWidth / photo.aspectRatio);
   const depthFactor = 0.65 + (photo.z + 300) / 600;
-  const pxOffset = settings.parallax ? parallaxOffset.x * depthFactor : 0;
-  const pyOffset = settings.parallax ? parallaxOffset.y * depthFactor : 0;
+  const pxOffset = settings.parallax && !isDragging ? parallaxOffset.x * depthFactor : 0;
+  const pyOffset = settings.parallax && !isDragging ? parallaxOffset.y * depthFactor : 0;
 
   const filterString = buildCssFilter(photo.effects);
   const shadowAlpha = (photo.effects.shadowIntensity / 100) * 0.78;
@@ -402,11 +396,8 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
   const innerFlipTransform = `scaleX(${photo.flipX ? -1 : 1}) scaleY(${photo.flipY ? -1 : 1})`;
 
   return (
-    <motion.div
+    <div
       ref={cardRef}
-      initial={{ opacity: 0, scale: 0.78 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -432,9 +423,10 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
         touchAction: 'none',
         mixBlendMode: photo.effects.blendMode,
         opacity: photo.effects.opacity / 100,
+        willChange: 'transform',
         transition: isDragging
-          ? 'box-shadow 0.2s ease'
-          : 'transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s ease, opacity 0.2s ease',
+          ? 'none'
+          : 'transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease',
       }}
       className={`group rounded-[22px] ${
         photo.locked
@@ -444,224 +436,224 @@ export const SpatialPhotoCard: React.FC<SpatialPhotoCardProps> = ({
           : 'cursor-grab'
       }`}
     >
-      {/* Subtle floating animation wrapper in non-dragging idle states */}
-      <div
-        className={`relative h-full w-full rounded-[22px] overflow-hidden border transition-colors duration-200 ${
-          isSelected
-            ? 'border-cyan-300/80'
-            : isHovered
-            ? 'border-cyan-400/55'
-            : 'border-white/15'
-        } ${mode === 'cinematic' && !isDragging ? 'animate-float-slow' : ''}`}
-        style={{ boxShadow }}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
+        className="relative h-full w-full"
+        style={{ transformStyle: 'preserve-3d' }}
       >
-        {/* Main Authentic Photo */}
-        <img
-          src={photo.src}
-          alt={photo.name}
-          draggable={false}
-          className="h-full w-full object-cover pointer-events-none select-none"
-          style={{
-            filter: filterString,
-            transform: innerFlipTransform,
-          }}
-        />
-
-        {/* Real-time Non-Destructive RGB Chromatic Split Overlay */}
-        {photo.effects.rgbSplit > 0 && (
-          <>
-            <img
-              src={photo.src}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className="pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-screen opacity-50"
-              style={{
-                filter: `${filterString} sepia(100%) saturate(420%) hue-rotate(310deg)`,
-                transform: `${innerFlipTransform} translateX(${-photo.effects.rgbSplit}px)`,
-              }}
-            />
-            <img
-              src={photo.src}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className="pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-screen opacity-50"
-              style={{
-                filter: `${filterString} sepia(100%) saturate(420%) hue-rotate(155deg)`,
-                transform: `${innerFlipTransform} translateX(${photo.effects.rgbSplit}px)`,
-              }}
-            />
-          </>
-        )}
-
-        {/* Real-time Non-Destructive Glitch Slice Overlay */}
-        {photo.effects.glitch > 0 && (
-          <>
-            <img
-              src={photo.src}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className="glitch-layer-a pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-lighten"
-              style={{
-                opacity: Math.min(0.85, photo.effects.glitch / 100),
-                filter: `${filterString} hue-rotate(90deg) contrast(140%)`,
-                transform: innerFlipTransform,
-              }}
-            />
-            <img
-              src={photo.src}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className="glitch-layer-b pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-screen"
-              style={{
-                opacity: Math.min(0.75, photo.effects.glitch / 115),
-                filter: `${filterString} hue-rotate(220deg) saturate(200%)`,
-                transform: innerFlipTransform,
-              }}
-            />
-            <div
-              className="pointer-events-none absolute inset-0"
-              style={{
-                opacity: (photo.effects.glitch / 100) * 0.25,
-                backgroundImage:
-                  'repeating-linear-gradient(0deg, rgba(255,255,255,0.16) 0px, rgba(255,255,255,0.16) 1px, transparent 1px, transparent 4px)',
-              }}
-            />
-          </>
-        )}
-
-        {/* Interactive Cursor Specular Glass Sheen */}
-        {settings.tilt3D && isHovered && (
-          <div
-            className="pointer-events-none absolute inset-0 transition-opacity duration-200"
+        <div
+          className={`relative h-full w-full rounded-[22px] overflow-hidden border transition-colors duration-200 ${
+            isSelected
+              ? 'border-cyan-300/80'
+              : isHovered
+              ? 'border-cyan-400/55'
+              : 'border-white/15'
+          } ${mode === 'cinematic' && !isDragging ? 'animate-float-slow' : ''}`}
+          style={{ boxShadow }}
+        >
+          <img
+            src={photo.src}
+            alt={photo.name}
+            draggable={false}
+            className="h-full w-full object-cover pointer-events-none select-none"
             style={{
-              background: `radial-gradient(circle at ${tilt.glareX}% ${tilt.glareY}%, rgba(255,255,255,0.22) 0%, rgba(56,189,248,0.06) 35%, transparent 70%)`,
+              filter: filterString,
+              transform: innerFlipTransform,
             }}
           />
-        )}
 
-        {/* Holographic Corner Reticles */}
-        {(isHovered || isSelected) && !uiHidden && (
-          <div className="pointer-events-none absolute inset-2.5">
-            <span className="absolute left-0 top-0 h-3.5 w-3.5 border-l-2 border-t-2 border-cyan-300/80 rounded-tl-sm" />
-            <span className="absolute right-0 top-0 h-3.5 w-3.5 border-r-2 border-t-2 border-cyan-300/80 rounded-tr-sm" />
-            <span className="absolute left-0 bottom-0 h-3.5 w-3.5 border-l-2 border-b-2 border-purple-400/80 rounded-bl-sm" />
-            <span className="absolute right-0 bottom-0 h-3.5 w-3.5 border-r-2 border-b-2 border-purple-400/80 rounded-br-sm" />
-          </div>
-        )}
-
-        {/* Bottom HUD Telemetry Tag on Photo */}
-        {!uiHidden && (isHovered || isSelected) && (
-          <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center justify-between rounded-xl bg-black/55 px-2.5 py-1.5 backdrop-blur-md border border-white/10">
-            <div className="flex items-center gap-1.5">
-              <span
-                className="h-1.5 w-1.5 rounded-full"
+          {photo.effects.rgbSplit > 0 && (
+            <>
+              <img
+                src={photo.src}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-screen opacity-50"
                 style={{
-                  backgroundColor: photo.effects.neonColor,
-                  boxShadow: `0 0 8px ${photo.effects.neonColor}`,
+                  filter: `${filterString} sepia(100%) saturate(420%) hue-rotate(310deg)`,
+                  transform: `${innerFlipTransform} translateX(${-photo.effects.rgbSplit}px)`,
                 }}
               />
-              <span className="font-mono text-[10px] font-medium tracking-wider text-white/90">
-                {photo.name}
+              <img
+                src={photo.src}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-screen opacity-50"
+                style={{
+                  filter: `${filterString} sepia(100%) saturate(420%) hue-rotate(155deg)`,
+                  transform: `${innerFlipTransform} translateX(${photo.effects.rgbSplit}px)`,
+                }}
+              />
+            </>
+          )}
+
+          {photo.effects.glitch > 0 && (
+            <>
+              <img
+                src={photo.src}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="glitch-layer-a pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-lighten"
+                style={{
+                  opacity: Math.min(0.85, photo.effects.glitch / 100),
+                  filter: `${filterString} hue-rotate(90deg) contrast(140%)`,
+                  transform: innerFlipTransform,
+                }}
+              />
+              <img
+                src={photo.src}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="glitch-layer-b pointer-events-none absolute inset-0 h-full w-full object-cover mix-blend-screen"
+                style={{
+                  opacity: Math.min(0.75, photo.effects.glitch / 115),
+                  filter: `${filterString} hue-rotate(220deg) saturate(200%)`,
+                  transform: innerFlipTransform,
+                }}
+              />
+              <div
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  opacity: (photo.effects.glitch / 100) * 0.25,
+                  backgroundImage:
+                    'repeating-linear-gradient(0deg, rgba(255,255,255,0.16) 0px, rgba(255,255,255,0.16) 1px, transparent 1px, transparent 4px)',
+                }}
+              />
+            </>
+          )}
+
+          {settings.tilt3D && isHovered && (
+            <div
+              className="pointer-events-none absolute inset-0 transition-opacity duration-200"
+              style={{
+                background: `radial-gradient(circle at ${tilt.glareX}% ${tilt.glareY}%, rgba(255,255,255,0.22) 0%, rgba(56,189,248,0.06) 35%, transparent 70%)`,
+              }}
+            />
+          )}
+
+          {(isHovered || isSelected) && !uiHidden && (
+            <div className="pointer-events-none absolute inset-2.5">
+              <span className="absolute left-0 top-0 h-3.5 w-3.5 border-l-2 border-t-2 border-cyan-300/80 rounded-tl-sm" />
+              <span className="absolute right-0 top-0 h-3.5 w-3.5 border-r-2 border-t-2 border-cyan-300/80 rounded-tr-sm" />
+              <span className="absolute left-0 bottom-0 h-3.5 w-3.5 border-l-2 border-b-2 border-purple-400/80 rounded-bl-sm" />
+              <span className="absolute right-0 bottom-0 h-3.5 w-3.5 border-r-2 border-b-2 border-purple-400/80 rounded-br-sm" />
+            </div>
+          )}
+
+          {!uiHidden && (isHovered || isSelected) && (
+            <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center justify-between rounded-xl bg-black/55 px-2.5 py-1.5 backdrop-blur-md border border-white/10">
+              <div className="flex items-center gap-1.5">
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{
+                    backgroundColor: photo.effects.neonColor,
+                    boxShadow: `0 0 8px ${photo.effects.neonColor}`,
+                  }}
+                />
+                <span className="font-mono text-[10px] font-medium tracking-wider text-white/90">
+                  {photo.name}
+                </span>
+              </div>
+              <span className="font-mono text-[9px] text-slate-300/80">
+                {photo.locked ? (
+                  <Lock className="inline h-3 w-3 text-amber-300" />
+                ) : (
+                  `${Math.round(photo.scale * 100)}% • ${photo.rotation}°`
+                )}
               </span>
             </div>
-            <span className="font-mono text-[9px] text-slate-300/80">
-              {photo.locked ? (
-                <Lock className="inline h-3 w-3 text-amber-300" />
-              ) : (
-                `${Math.round(photo.scale * 100)}% • ${photo.rotation}°`
-              )}
-            </span>
+          )}
+        </div>
+
+        {isSelected && !uiHidden && !photo.locked && (
+          <div
+            data-no-drag="true"
+            className="aether-glass absolute -top-12 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full px-2 py-1 shadow-2xl"
+          >
+            <button
+              type="button"
+              data-no-drag="true"
+              onPointerDown={handleRotateDialDown}
+              title="Drag to Rotate"
+              className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-mono text-cyan-200 hover:bg-cyan-400/20 cursor-ew-resize transition"
+            >
+              <RotateCw className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">ROT</span>
+            </button>
+            <div className="h-3.5 w-px bg-white/15" />
+            <button
+              type="button"
+              data-no-drag="true"
+              onClick={(e) => {
+                e.stopPropagation();
+                playSound('click', settings.audioEnabled);
+                onUpdate(photo.id, (p) => ({ ...p, flipX: !p.flipX }));
+              }}
+              title="Flip Horizontal"
+              className="rounded-full p-1.5 text-slate-200 hover:bg-white/15 hover:text-cyan-200 transition"
+            >
+              <FlipHorizontal2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              data-no-drag="true"
+              onClick={(e) => {
+                e.stopPropagation();
+                playSound('click', settings.audioEnabled);
+                onUpdate(photo.id, (p) => ({ ...p, flipY: !p.flipY }));
+              }}
+              title="Flip Vertical"
+              className="rounded-full p-1.5 text-slate-200 hover:bg-white/15 hover:text-cyan-200 transition"
+            >
+              <FlipVertical2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              data-no-drag="true"
+              onClick={(e) => {
+                e.stopPropagation();
+                playSound('click', settings.audioEnabled);
+                onBringFront(photo.id);
+              }}
+              title="Bring to Front"
+              className="rounded-full p-1.5 text-slate-200 hover:bg-white/15 hover:text-cyan-200 transition"
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              data-no-drag="true"
+              onClick={(e) => {
+                e.stopPropagation();
+                playSound('click', settings.audioEnabled);
+                onSendBack(photo.id);
+              }}
+              title="Send Backward"
+              className="rounded-full p-1.5 text-slate-200 hover:bg-white/15 hover:text-cyan-200 transition"
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              data-no-drag="true"
+              onClick={(e) => {
+                e.stopPropagation();
+                onResetOne(photo.id);
+              }}
+              title="Reset Position (or Double-Click)"
+              className="rounded-full p-1.5 text-slate-200 hover:bg-rose-500/25 hover:text-rose-200 transition"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+            </button>
           </div>
         )}
-      </div>
-
-      {/* Floating On-Card Quick Action Bar (when selected & UI visible) */}
-      {isSelected && !uiHidden && !photo.locked && (
-        <div
-          data-no-drag="true"
-          className="aether-glass absolute -top-12 left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-full px-2 py-1 shadow-2xl"
-        >
-          <button
-            type="button"
-            data-no-drag="true"
-            onPointerDown={handleRotateDialDown}
-            title="Drag to Rotate"
-            className="flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-mono text-cyan-200 hover:bg-cyan-400/20 cursor-ew-resize transition"
-          >
-            <RotateCw className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">ROT</span>
-          </button>
-          <div className="h-3.5 w-px bg-white/15" />
-          <button
-            type="button"
-            data-no-drag="true"
-            onClick={(e) => {
-              e.stopPropagation();
-              playSound('click', settings.audioEnabled);
-              onUpdate(photo.id, (p) => ({ ...p, flipX: !p.flipX }));
-            }}
-            title="Flip Horizontal"
-            className="rounded-full p-1.5 text-slate-200 hover:bg-white/15 hover:text-cyan-200 transition"
-          >
-            <FlipHorizontal2 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            data-no-drag="true"
-            onClick={(e) => {
-              e.stopPropagation();
-              playSound('click', settings.audioEnabled);
-              onUpdate(photo.id, (p) => ({ ...p, flipY: !p.flipY }));
-            }}
-            title="Flip Vertical"
-            className="rounded-full p-1.5 text-slate-200 hover:bg-white/15 hover:text-cyan-200 transition"
-          >
-            <FlipVertical2 className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            data-no-drag="true"
-            onClick={(e) => {
-              e.stopPropagation();
-              playSound('click', settings.audioEnabled);
-              onBringFront(photo.id);
-            }}
-            title="Bring to Front"
-            className="rounded-full p-1.5 text-slate-200 hover:bg-white/15 hover:text-cyan-200 transition"
-          >
-            <ArrowUp className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            data-no-drag="true"
-            onClick={(e) => {
-              e.stopPropagation();
-              playSound('click', settings.audioEnabled);
-              onSendBack(photo.id);
-            }}
-            title="Send Backward"
-            className="rounded-full p-1.5 text-slate-200 hover:bg-white/15 hover:text-cyan-200 transition"
-          >
-            <ArrowDown className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            data-no-drag="true"
-            onClick={(e) => {
-              e.stopPropagation();
-              onResetOne(photo.id);
-            }}
-            title="Reset Position (or Double-Click)"
-            className="rounded-full p-1.5 text-slate-200 hover:bg-rose-500/25 hover:text-rose-200 transition"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      )}
-    </motion.div>
+      </motion.div>
+    </div>
   );
 };
